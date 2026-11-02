@@ -132,6 +132,12 @@ object AuditStore {
             val result = mutableListOf<JSONObject>(); while(it.moveToNext()) result.add(row(it)); result
         }
     }
+    @Synchronized fun tokenSummaries(c:Context):List<JSONObject> {
+        init(c)
+        return db.rawQuery("SELECT token_id, MAX(token_name) AS token_name, COUNT(*) AS count, MAX(time) AS last_time FROM audit GROUP BY token_id ORDER BY MAX(time) DESC", null).use { cursor ->
+            val result=mutableListOf<JSONObject>();while(cursor.moveToNext()) result.add(row(cursor));result
+        }
+    }
     @Synchronized fun delete(c: Context, id: String? = null, tokenId: String? = null) {
         init(c)
         when { id != null -> db.delete("audit", "id=?", arrayOf(id)); tokenId != null -> db.delete("audit", "token_id=?", arrayOf(tokenId)); else -> db.delete("audit", null, null) }

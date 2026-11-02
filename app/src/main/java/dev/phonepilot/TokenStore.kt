@@ -42,6 +42,16 @@ object TokenStore {
         save(c, all(c).map { if(it.id == id) it.copy(name = name.trim(), expires = expires) else it })
     }
     @Synchronized fun enable(c: Context, id: String, enabled: Boolean) { save(c, all(c).map { if(it.id == id) it.copy(enabled = enabled) else it }) }
+    @Synchronized fun delete(c: Context, id: String) {
+        val existing = all(c)
+        val removed = existing.firstOrNull { it.id == id } ?: return
+        val remaining = existing.filter { it.id != id }
+        val editor = prefs(c).edit().putString("tokens", JSONArray(remaining.map { it.json() }).toString())
+        if(prefs(c).getString("selectedToken", "") == id) editor.putString("selectedToken", remaining.firstOrNull { it.valid() }?.id ?: "")
+        if(prefs(c).getString("token", null) == removed.secret) editor.remove("token")
+        check(editor.commit()) { "Token 删除保存失败，请重试" }
+        RuntimeState.revokeToken?.invoke(id)
+    }
     fun select(c: Context, id: String) { prefs(c).edit().putString("selectedToken", id).apply() }
     fun selected(c: Context): ApiToken? {
         val values = all(c)

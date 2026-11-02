@@ -31,7 +31,7 @@ assert json.loads(mcp['result']['content'][0]['text'])['model']==result['result'
 assert 'error' in post('/api/command',{'action':'volume_set','args':{'value':101}})[1]
 assert 'error' in post('/api/command',{'action':'open_app','args':{'package':'bad;id'}})[1]
 _,tools=post('/mcp',{'jsonrpc':'2.0','id':2,'method':'tools/list'})
-assert len(tools['result']['tools'])==11
+assert {'get_status','root_shell','list_actions','describe_action'} <= {t['name'] for t in tools['result']['tools']}
 # Minimal RFC6455 client: exercise the real WebSocket server without new dependencies.
 def connect(auth):
  s=socket.create_connection(('127.0.0.1',8765));s.settimeout(5)
@@ -51,4 +51,4 @@ if n==126:n=struct.unpack('!H',exact(s,2))[0]
 if n==127:n=struct.unpack('!Q',exact(s,8))[0]
 ws=json.loads(exact(s,n));assert ws['id']==7 and ws['result']['model']==result['result']['model'];s.close()
 s=connect(False);assert exact(s,2)[0]&15==8;s.close()
-print('PASS: HTTP/MCP unauthorized rejected; HTTP + MCP + WebSocket get_status; 11 MCP tools; input validation; unauthenticated WebSocket closed.')
+print('PASS: HTTP/MCP unauthorized rejected; HTTP + MCP + WebSocket get_status; dynamic MCP tools; input validation; unauthenticated WebSocket closed.')

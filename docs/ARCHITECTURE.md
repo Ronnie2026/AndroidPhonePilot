@@ -78,3 +78,9 @@ AuditStore 默认 30 天并开启自动清理，移除按记录数量淘汰。�
 ## 0.4.0 界面分层
 
 IosActivity 是共享的原生展示层，统一主题、导航栏、紧凑分组行、开关和复制反馈。MainActivity 将概览统计、设置、协议详情拆分为独立页面；TokenActivity 将 Token 列表、单 Token 详情、日志统计、日志存储分为独立页面并维护返回路径。首页每两秒采样，日志聚合放到工作线程，避免归档或清理时阻塞首页滚动。设置控件直接调用既有 TokenStore 和 AuditStore，协议执行层不承担页面渲染。
+
+## 0.5.0 统一动作注册与文档
+
+ActionSpec 定义输入输出 Schema 和功能说明，CommandDispatcher 将它与执行函数一次注册。构造阶段验证示例、请求阶段验证参数、返回阶段验证结果。HTTP、WS、MCP、REST 发现端点和 ApiGuideActivity 均读取这一注册表；ApiContract 生成各协议的外层封装及可复制说明。MCP 版本协商决定是否输出 outputSchema/structuredContent，旧客户端仍保留 content 文本路径。
+
+Token 删除通过 TokenStore 持久化并通知服务撤销连接；握手注册与删除使用同一 TokenStore 监视器，防止删除和连接建立竞争。请求已进入执行阶段时无法回滚。审计记录保留 Token ID，删除凭证不会顺带删日志，历史筛选通过 AuditStore 的聚合目录解析已删除项。删除入口的引用检查确认仅是用户确认，不冒充外部调用方发现能力。

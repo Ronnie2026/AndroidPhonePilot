@@ -10,6 +10,8 @@ object RuntimeState {
     @Volatile var startedAt = 0L
     @Volatile var lastError = ""
     @Volatile var clients = 0
+    @Volatile var revokeToken: ((String) -> Unit)? = null
+    @Volatile var tokenConnections: ((String) -> Int)? = null
     fun token(context: Context): String = TokenStore.selected(context)?.secret ?: ""
     fun host(context: Context) = if (context.getSharedPreferences("pilot", 0).getBoolean("lan", false)) "0.0.0.0" else "127.0.0.1"
 }

@@ -28,7 +28,7 @@ class MainActivity : IosActivity() {
     override fun onCreate(state:Bundle?) {
         super.onCreate(state); TokenStore.all(this)
         startForegroundService(Intent(this,PilotService::class.java))
-        screen=state?.getString("screen") ?: "home"; publicIp=state?.getString("ip") ?: "未查询"; render()
+        screen=(state?.getString("screen") ?: "home").takeIf {it in listOf("home","settings","adb")} ?: "settings"; publicIp=state?.getString("ip") ?: "未查询"; render()
     }
     override fun onSaveInstanceState(out:Bundle) { out.putString("screen",screen); out.putString("ip",publicIp); super.onSaveInstanceState(out) }
     override fun onResume() { super.onResume(); if(screen!="home") render(); handler.post(ticker) }
@@ -41,7 +41,7 @@ class MainActivity : IosActivity() {
         when(screen) {
             "home" -> { page("概览",gear=true,rightAction={go("settings")}); home() }
             "settings" -> { page("设置","概览",{go("home")}); settings() }
-            else -> { page(when(screen){"mcp"->"MCP";"http"->"HTTP";"ws"->"WebSocket";"adb"->"ADB";else->"Root Shell"},"设置",{go("settings")}); connection() }
+            else -> { page("ADB","设置",{go("settings")}); adbGuide() }
         }
     }
     private fun metric(parent:LinearLayout,key:String,title:String,subtitle:String,margin:Boolean) {
@@ -127,9 +127,9 @@ class MainActivity : IosActivity() {
         footnote(if(prefs.getBoolean("lan",false)) "局域网可访问，所有入口均需有效 Token。" else "仅本机可访问，可通过 ADB 转发连接。")
         gap(14)
         val protocols=group("连接方式")
-        row(protocols,"MCP","HTTP JSON",action={go("mcp")})
-        row(protocols,"HTTP","/api/command",action={go("http")})
-        row(protocols,"WebSocket","/ws",action={go("ws")})
+        row(protocols,"MCP","HTTP JSON",action={guide("mcp")})
+        row(protocols,"HTTP","/api/command",action={guide("http")})
+        row(protocols,"WebSocket","/ws",action={guide("ws")})
         gap()
         val logs=group("日志")
         row(logs,"调用统计与明细",action={manager("logs")})
@@ -137,7 +137,7 @@ class MainActivity : IosActivity() {
         gap()
         val tools=group("系统工具")
         row(tools,"ADB","端口转发",action={go("adb")})
-        row(tools,"Root Shell","调用说明",action={go("shell")})
+        row(tools,"Root Shell","调用说明",action={guide("http","root_shell")})
         row(tools,"网络识别权限",action={requestPermissions(arrayOf(Manifest.permission.READ_PHONE_STATE),11)})
         footnote("PhonePilot ${BuildConfig.VERSION_NAME} · 原生 Android 控制服务")
     }
@@ -146,48 +146,11 @@ class MainActivity : IosActivity() {
         if(values.isEmpty()) { manager("tokens");return }
         AlertDialog.Builder(this).setTitle("选择调用 Token").setItems(values.map { it.name }.toTypedArray()) { _,index ->TokenStore.select(this,values[index].id);render() }.setNegativeButton("取消",null).show()
     }
-    private fun host():String {
-        if(!prefs.getBoolean("lan",false)) return "127.0.0.1"
-        val addresses=DeviceStatus.read(this).getJSONArray("addresses")
-        val values=(0 until addresses.length()).map { addresses.getJSONObject(it) }.filter { it.getBoolean("private") }
-        return (values.firstOrNull { it.getString("interface").startsWith("wlan") } ?: values.firstOrNull())?.getString("ip") ?: "127.0.0.1"
-    }
-    private fun connection() {
-        val address=host()
-        val endpoint=when(screen){"mcp"->"http://$address:8766/mcp";"ws"->"ws://$address:8765/ws";else->"http://$address:8766/api/command"}
-        if(screen=="adb") {
-            val g=group("USB 调试")
-            row(g,"复制端口转发命令",action={copy("adb forward tcp:8765 tcp:8765\nadb forward tcp:8766 tcp:8766")})
-            footnote("在已授权 USB 调试的电脑执行。ADB 和直接 adb shell 沿用系统原有授权。")
-            return
-        }
-        val connection=group("接口")
-        row(connection,"地址",endpoint,action={copy(endpoint)})
-        row(connection,"Token",TokenStore.selected(this)?.name ?: "未选择",action={chooseToken()})
-        row(connection,"复制 Token",action={copy(RuntimeState.token(this))})
-        gap()
-        val examples=group("调用示例")
-        row(examples,"复制调用示例",action={
-            val token=RuntimeState.token(this)
-            if(token.isEmpty()) { toast("请先创建有效 Token");return@row }
-            val headers="-H 'Authorization: Bearer $token' -H 'Content-Type: application/json'"
-            val command="{\"id\":1,\"action\":\"get_status\",\"args\":{}}"
-            copy(when(screen) {
-                "mcp"->"curl $endpoint $headers -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"get_status\",\"arguments\":{}}}'"
-                "ws"->"# 建立连接后发送下一行 JSON\nwebsocat -H='Authorization: Bearer $token' $endpoint\n$command"
-                "shell"->"curl $endpoint $headers -d '{\"id\":2,\"action\":\"root_shell\",\"args\":{\"command\":\"id\"}}'"
-                else->"curl $endpoint $headers -d '$command'"
-            })
-        })
-        if(screen=="mcp") row(examples,"复制 MCP 客户端配置",action={
-            val token=RuntimeState.token(this);if(token.isEmpty()){toast("请先创建有效 Token");return@row}
-            copy(JSONObject().put("mcpServers",JSONObject().put("phonepilot",JSONObject().put("url",endpoint).put("headers",JSONObject().put("Authorization","Bearer $token")))).toString(2))
-        })
-        footnote(when(screen){"ws"->"连接时携带 Authorization 请求头，发送 JSON 动作。电脑示例使用 websocat。";"mcp"->"使用支持 HTTP MCP 与认证头的客户端。";"shell"->"通过 root_shell 动作执行 su -c，需要手机 Root 授权。";else->"POST JSON 动作；与 MCP、WebSocket 使用相同的核心实现。"})
-        footnote("复制内容包含密钥，仅交给可信调用方。")
-        gap(16)
-        val actions=group("可用动作")
-        val listing=label(CommandDispatcher(this).actions.joinToString("  ·  "),13f,secondary).apply { setPadding(dp(16),dp(14),dp(16),dp(14));setLineSpacing(dp(6).toFloat(),1f) };actions.addView(listing)
+    private fun guide(protocol:String,action:String?=null) {startActivity(Intent(this,ApiGuideActivity::class.java).putExtra("protocol",protocol).putExtra("action",action))}
+    private fun adbGuide() {
+        val g=group("USB 调试")
+        row(g,"复制端口转发命令",action={copy("adb forward tcp:8765 tcp:8765\nadb forward tcp:8766 tcp:8766")})
+        footnote("在已授权 USB 调试的电脑执行。ADB 和直接 adb shell 沿用系统原有授权。")
     }
     private fun changeLan(enabled:Boolean) {
         prefs.edit().putBoolean("lan",enabled).apply();stopService(Intent(this,PilotService::class.java));startForegroundService(Intent(this,PilotService::class.java));render()

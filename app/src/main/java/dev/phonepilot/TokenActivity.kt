@@ -59,6 +59,24 @@ class TokenActivity : IosActivity() {
         gap(16)
         val stats=AuditStore.stats(this,token.id);summary(stats)
         row(group(),"调用明细",action={go("logs",token.id)})
+        gap(16)
+        row(group(),"删除 Token",action={confirmDeleteToken(token)},destructive=true)
+    }
+    private fun confirmDeleteToken(token:ApiToken) {
+        val stats=AuditStore.stats(this,token.id)
+        val connections=RuntimeState.tokenConnections?.invoke(token.id) ?: 0
+        val message="删除“${token.name}”前，请确认是否仍有服务引用此 Token。\n\n请检查 MCP 客户端、HTTP / WebSocket 服务，以及 ESP32 / 小智等调用方是否已更换或不再使用它。应用无法自动检测全部外部引用。\n\n当前 WebSocket 连接：$connections\n最近调用：${if(stats.getLong("lastTime")==0L) "无保留记录" else date(stats.getLong("lastTime"))}\n\n删除后密钥立即失效，已有连接将断开，操作不可恢复；已开始执行的动作无法撤回。历史调用日志保留。"
+        val form=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;setPadding(dp(20),0,dp(20),0) }
+        val check=CheckBox(this).apply { text="我已确认相关服务已更换 Token 或不再引用" };form.addView(check)
+        val dialog=AlertDialog.Builder(this).setTitle("确认删除 Token？").setMessage(message).setView(form).setNegativeButton("取消",null).setPositiveButton("删除",null).create()
+        dialog.setOnShowListener {
+            val remove=dialog.getButton(AlertDialog.BUTTON_POSITIVE);remove.isEnabled=false;remove.setTextColor(secondary)
+            check.setOnCheckedChangeListener {_,confirmed->remove.isEnabled=confirmed;remove.setTextColor(if(confirmed) red else secondary)}
+            remove.setOnClickListener {
+                try { TokenStore.delete(this,token.id);dialog.dismiss();back();toast("Token 已删除") }
+                catch(e:Exception) {toast(e.message ?: "删除失败，请重试")}
+            }
+        };dialog.show()
     }
     private fun summary(stats:JSONObject) {
         val count=stats.getLong("count");val successful=stats.getLong("success")
@@ -72,14 +90,7 @@ class TokenActivity : IosActivity() {
     }
     private fun storage() {
         val record=group("记录")
-        val choices=LinearLayout(this).apply { setPadding(dp(4),dp(4),dp(4),dp(4));background=rounded(if(dark) 0xFF2C2C2E.toInt() else 0xFFE3E3E8.toInt(),10) }
-        listOf(true to "开启日志",false to "关闭日志").forEach { (enabled,title)->
-            choices.addView(label(title,14f,if(AuditStore.enabled(this)==enabled) ink else secondary,true).apply {
-                gravity=android.view.Gravity.CENTER;minHeight=dp(36)
-                if(AuditStore.enabled(this@TokenActivity)==enabled) background=rounded(surface,8)
-                setOnClickListener { AuditStore.setEnabled(this@TokenActivity,enabled);render() }
-            },LinearLayout.LayoutParams(0,dp(36),1f))
-        };record.addView(choices)
+        row(record,"记录调用日志",subtitle=if(AuditStore.enabled(this)) "已开启 · 记录请求与响应" else "已关闭 · 不再记录新调用",control=toggle(AuditStore.enabled(this),"记录调用日志") { enabled -> AuditStore.setEnabled(this,enabled); render() })
         footnote(if(AuditStore.enabled(this)) "记录请求与响应，密钥自动脱敏。" else "新调用不记录，已有日志仍可查看。")
         gap(16)
         val retention=group("保留策略")
@@ -110,10 +121,12 @@ class TokenActivity : IosActivity() {
     }
     private fun logs() {
         summary(AuditStore.stats(this,filter))
+        val current=TokenStore.all(this)
+        val historyTokens=AuditStore.tokenSummaries(this).filter { h->current.none { it.id==h.getString("token_id") } }
+        val choices=current.map {it.id to it.name}+historyTokens.map {it.getString("token_id") to (it.getString("token_name")+if(it.getString("token_id")=="unrecognized") "" else "（已删除）")}
         val picker=group()
-        row(picker,"Token",filter?.let { id->TokenStore.all(this).firstOrNull {it.id==id}?.name } ?: "全部",action={
-            val tokens=TokenStore.all(this)
-            AlertDialog.Builder(this).setTitle("按 Token 筛选").setItems((listOf("全部 Token")+tokens.map {it.name}).toTypedArray()) { _,index->filter=if(index==0) null else tokens[index-1].id;offset=0;render() }.setNegativeButton("取消",null).show()
+        row(picker,"Token",choices.firstOrNull {it.first==filter}?.second ?: "全部",action={
+            AlertDialog.Builder(this).setTitle("按 Token 筛选").setItems((listOf("全部 Token")+choices.map {it.second}).toTypedArray()) { _,index->filter=if(index==0) null else choices[index-1].first;offset=0;render() }.setNegativeButton("取消",null).show()
         })
         gap(16)
         val entries=AuditStore.list(this,filter,offset)

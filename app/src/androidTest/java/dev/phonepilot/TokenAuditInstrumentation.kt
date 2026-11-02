@@ -90,8 +90,27 @@ class TokenAuditInstrumentation : Instrumentation() {
             AuditStore.setRetention(c,7,true); check(AuditStore.stats(c).getLong("count")==0L)
             check(runCatching { AuditStore.setRetention(c,0,true) }.isFailure)
             AuditStore.setRetention(c,30,true)
+            val deletion=TokenStore.create(c,"集成测试-删除",365).also {created.add(it.id)}
+            check(call(deletion)==200)
+            val deletionSocket=java.net.Socket("127.0.0.1",8765);activeSocket=deletionSocket;deletionSocket.soTimeout=5000
+            deletionSocket.getOutputStream().write("GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nAuthorization: Bearer ${deletion.secret}\r\n\r\n".toByteArray())
+            val deletionInput=deletionSocket.getInputStream();val deletionHeader=StringBuilder()
+            while(!deletionHeader.endsWith("\r\n\r\n")) {val n=deletionInput.read();check(n>=0);deletionHeader.append(n.toChar())}
+            check(deletionHeader.startsWith("HTTP/1.1 101"))
+            TokenStore.delete(c,deletion.id)
+            check(TokenStore.all(c).none {it.id==deletion.id});check(call(deletion)==401)
+            check(deletionInput.read() and 15 == 8) {"Deleted Token WebSocket did not close"}
+            deletionSocket.close();activeSocket=null
+            check(AuditStore.stats(c,deletion.id).getLong("count")>0)
+            check(AuditStore.tokenSummaries(c).any {it.getString("token_id")==deletion.id})
+            val isolatedName="test-isolated-tokens-${java.util.UUID.randomUUID()}"
+            val isolated=object:android.content.ContextWrapper(c) {override fun getSharedPreferences(name:String,mode:Int)=c.getSharedPreferences(isolatedName,mode)}
+            TokenStore.all(isolated).forEach {TokenStore.delete(isolated,it.id)}
+            check(TokenStore.all(isolated).isEmpty() && TokenStore.selected(isolated)==null)
+            check(TokenStore.all(isolated).isEmpty()) {"Deleting last Token silently regenerated a credential"}
+            c.deleteSharedPreferences(isolatedName)
             resultCode = ActivityResult.OK
-            result.putString("stream","PASS: 365-day/default + perpetual expiry; edit; HTTP/MCP expiry & disable; connected WS expiry; per-token stats/details; secret masking; global off; single/token/all deletion; native XLog archive; 30-day retention, cleanup checkbox and custom 7-day policy.\n")
+            result.putString("stream","PASS: 365-day/default + perpetual expiry; edit; HTTP/MCP expiry & disable; connected WS expiry; per-token stats/details; secret masking; global off; single/token/all deletion; native XLog archive; 30-day retention, cleanup checkbox and custom 7-day policy; Token deletion revocation, immediate WS close, historical logs and no credential regeneration.\n")
         } catch(failure: Throwable) {
             result.putString("stream","FAIL: ${failure.javaClass.simpleName}: ${failure.message}\n${failure.stackTrace.take(5).joinToString("\n")}\n")
         } finally {

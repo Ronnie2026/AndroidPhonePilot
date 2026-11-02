@@ -111,3 +111,27 @@ XLog 中每条审计记录按 UTF-8 JSON → Base64 → 编号分片写入，避
 - `IosActivity.kt` 统一实现原生导航栏、分组行、圆角背景、主题和控件；原有 API、Token 和日志组件通过原有入口调用。
 
 本版通过 `assembleDebug lintDebug` 和三协议入口 smoke 检查；在 ARM64 模拟器检查亮/暗主题、页面导航、Token 行开关的实际认证效果，以及日志记录分段选择。真机 Root、蜂窝网络和设备 XLog 兼容性的验证边界不变。
+
+## 0.5.0 Token 删除与统一动作约定
+
+- Token 详情增加删除入口：先警告检查 MCP/HTTP/WS 等服务引用，显示已知 WS 连接数和最近调用；必须勾选“已更换 Token 或不再引用”才可确认。应用不能自动发现全部外部引用。删除持久化后旧密钥失效，并主动关闭该 Token 的 WS 连接；已开始执行的动作无法撤回。历史日志保留，日志筛选中可选择“已删除”的 Token。最后一个 Token 删除后不会自动生成新凭证。
+- 日志存储改为原生开关，明确显示已开启/已关闭状态；30 天保留与自动清理策略继续独立设置。
+- 新增统一 ActionSpec 注册表：功能说明、分类、Root/修改状态标记、输入/输出 Schema、参数及结果示例、行为限制与执行函数一起注册。输入统一校验，输出按声明检查；三个入口、动态目录和页面共用定义。
+- 原有 11 个动作之外新增 `list_actions`、`describe_action(name)`，三个入口均可调用。MCP tools/list 动态返回描述和 Schema，HTTP/WS 不再另维护清单。
+- 带 Bearer Token 的动态发现：`GET /api/actions`、`GET /api/actions/{name}`、`GET /api/contract`。最后一个返回全部协议说明、Schema、请求/响应与命令示例，不包含实际密钥。
+- 设置 → MCP / HTTP / WebSocket 进入动态接入指南。按分类查看功能，逐项查看/复制参数类型、必填、范围、权限、请求/响应、命令和完整说明。复制公共说明使用 `<TOKEN>`；主动复制可执行命令或客户端配置才加入当前所选密钥。所有响应示例明确为非实时。
+- MCP 支持 2025-06-18（outputSchema、structuredContent）和 2025-03-26 兼容路径。initialize 协商版本；后续使用 MCP-Protocol-Version 头。仍采用 HTTP JSON 响应，不提供 SSE，不代表所有 MCP 客户端都已完成互操作验证。
+- 动作错误保留可读 error，并增加 errorCode；MCP 工具失败为 isError=true。系统命令需继续检查 exitCode。示例命令经过 shell 引号转义，避免参数中的引号破坏可复制命令。
+
+新增功能必须遵循 [动作实现标准](docs/ACTION_STANDARD.md)。动态接入文档由 ApiContract 和 ApiGuideActivity 读取实际执行注册表生成，不得手工维护另一份功能表。
+
+### 本版检查
+
+`assembleDebug assembleDebugAndroidTest lintDebug`；Token 仪器测试增加删除后拒绝、即刻断开已有 WS、历史日志保留和不自动重建凭证的覆盖。独立 JSON Schema 验证及真实三入口集成测试：安装 `jsonschema` 后，设置 `ANDROID_SERIAL=emulator-5554`（多设备时必须选择模拟器）、两个端口转发和 adb PATH，运行 `python scripts/contract_test.py`。可设置 `PHONEPILOT_EXPORT_DIR` 导出无密钥的 JSON 与三协议 Markdown 接入说明。真机 Root、蜂窝和跨 MCP 客户端验证仍分开记录。
+
+
+### 实际 Streamable HTTP 客户端调用（模拟器）
+
+当前 MCP 为 Streamable HTTP 的无状态 JSON 响应模式：POST /mcp 返回 JSON；GET /mcp 返回 405，未提供 SSE 推送。Origin 存在时校验同源，未知来源 403。官方 MCP Python SDK 2.3.0 的 streamable_http_client 已实测：initialize 协商 2025-06-18、列举 13 个工具、get_status、volume_up、volume_set、参数错误和 describe_action 均完成；媒体音量实际 7 → 8 → 7 并恢复。Root id 返回 Cannot run program su: Permission denied，模拟器内应用未获得 su 权限，不能据此确认 Root 真机动作。
+
+复现：安装 scripts/requirements-test.txt，以 ANDROID_SERIAL 指定模拟器并转发端口后运行 scripts/mcp_client_test.py。脚本只允许模拟器，音量测试完成会恢复原档位；PHONEPILOT_MCP_REPORT 可保存无密钥的调用记录。此为官方 SDK 单项互操作证据，不表示所有客户端和 Root/ROM 行为都通过验证。

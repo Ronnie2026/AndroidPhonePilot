@@ -31,15 +31,23 @@ class PilotService : Service() {
         RuntimeState.serviceRunning = true
         RuntimeState.startedAt = SystemClock.elapsedRealtime()
         RuntimeState.lastError = ""
+        RuntimeState.tokenConnections = { id -> authenticated.values.count { it==id } }
+        RuntimeState.revokeToken = { id ->
+            authenticated.entries.filter { it.value==id }.forEach { entry -> authenticated.remove(entry.key);entry.key.close(1008,"Token deleted") }
+            RuntimeState.clients=authenticated.size
+        }
         val core = CommandDispatcher(this)
         val host = RuntimeState.host(this)
         ws = object : WebSocketServer(InetSocketAddress(host, 8765)) {
             override fun onOpen(connection: WebSocket, handshake: ClientHandshake) {
-                val known = TokenStore.identify(this@PilotService, handshake.getFieldValue("Authorization"))
-                val valid = known?.valid() == true && handshake.resourceDescriptor == "/ws"
+                val (known, valid) = synchronized(TokenStore) {
+                    val candidate=TokenStore.identify(this@PilotService,handshake.getFieldValue("Authorization"))
+                    val accepted=candidate?.valid()==true && handshake.resourceDescriptor=="/ws"
+                    if(accepted) {authenticated[connection]=candidate!!.id;RuntimeState.clients=authenticated.size}
+                    candidate to accepted
+                }
                 audit(known, "WebSocket", "{\"action\":\"handshake\"}", if(valid) "{\"connected\":true}" else "{\"error\":\"Unauthorized\"}", if(valid) 101 else 401, System.currentTimeMillis(), 0, connection.remoteSocketAddress?.toString() ?: "")
-                if (!valid) { connection.close(1008, "Unauthorized or expired"); return }
-                authenticated[connection] = known!!.id; RuntimeState.clients = authenticated.size
+                if (!valid) connection.close(1008,"Unauthorized or expired")
             }
             override fun onClose(connection: WebSocket, code: Int, reason: String, remote: Boolean) {
                 authenticated.remove(connection); RuntimeState.clients = authenticated.size
@@ -59,7 +67,7 @@ class PilotService : Service() {
                     audit(known, "WebSocket", message.take(65536), response, 401, start, 0, peer)
                     connection.send(response); connection.close(1008, "Token expired or disabled"); return
                 }
-                if (message.length > 65536) {
+                if (message.toByteArray(Charsets.UTF_8).size > 65536) {
                     audit(known, "WebSocket", "[request too large]", "{\"error\":\"Request too large\"}", 413, start, 0, peer)
                     connection.close(1009, "Request too large"); return
                 }
@@ -77,30 +85,49 @@ class PilotService : Service() {
                     audit(token, if(session.uri == "/mcp") "MCP" else "HTTP", payload, value, status.requestStatus, start, SystemClock.elapsedRealtime()-clock, session.remoteIpAddress ?: "")
                     return newFixedLengthResponse(status, "application/json", value)
                 }
+                val origin=session.headers["origin"]
+                if(session.uri=="/mcp" && origin!=null && origin !in setOf("http://127.0.0.1:8766","http://localhost:8766","http://[::1]:8766","http://${ApiContract.host(this@PilotService)}:8766"))
+                    return reply(Response.Status.FORBIDDEN,"{\"error\":\"Origin not allowed\"}")
                 if (token?.valid() != true) return reply(Response.Status.UNAUTHORIZED, "{\"error\":\"Unauthorized or expired\"}")
-                if (session.method != Method.POST || session.uri !in listOf("/mcp", "/api/command"))
-                    return reply(Response.Status.NOT_FOUND, "{\"error\":\"POST /mcp or /api/command\"}")
+                val contract = ApiContract(core, ApiContract.host(this@PilotService))
+                if(session.method == Method.GET) {
+                    val result = when {
+                        session.uri=="/api/actions" -> core.catalog()
+                        session.uri=="/api/contract" -> contract.json()
+                        session.uri.startsWith("/api/actions/") -> try { core.describe(session.uri.removePrefix("/api/actions/")).json() } catch (_:ActionFailure) { return reply(Response.Status.NOT_FOUND,"{\"error\":\"Unknown action\",\"errorCode\":\"UNKNOWN_ACTION\"}") }
+                        session.uri=="/mcp" || session.uri=="/api/command" -> return reply(Response.Status.METHOD_NOT_ALLOWED,"{\"error\":\"Use POST\"}")
+                        else -> return reply(Response.Status.NOT_FOUND,"{\"error\":\"Not found\"}")
+                    }
+                    return reply(Response.Status.OK,result.toString())
+                }
+                if(session.uri in listOf("/api/actions","/api/contract") || session.uri.startsWith("/api/actions/")) return reply(Response.Status.METHOD_NOT_ALLOWED,"{\"error\":\"Use GET\"}")
+                if(session.uri !in listOf("/mcp","/api/command")) return reply(Response.Status.NOT_FOUND,"{\"error\":\"Not found\"}")
+                if(session.method != Method.POST) return reply(Response.Status.METHOD_NOT_ALLOWED,"{\"error\":\"Use POST\"}")
+                val protocolVersion=session.headers["mcp-protocol-version"] ?: "2025-03-26"
+                if(session.uri=="/mcp" && protocolVersion !in ApiContract.MCP_VERSIONS) return reply(Response.Status.BAD_REQUEST,"{\"error\":\"Unsupported MCP-Protocol-Version\"}")
+                val modern=protocolVersion==ApiContract.MCP_VERSION
                 val length = session.headers["content-length"]?.toLongOrNull()
                 if (length == null || length !in 1..65536) return reply(Response.Status.BAD_REQUEST, "{\"error\":\"Content-Length must be 1..65536\"}")
                 return try {
                     val body = HashMap<String, String>(); session.parseBody(body); payload = body["postData"] ?: "{}"
-                    if (session.uri == "/api/command") return reply(Response.Status.OK, actionResponse(core, payload).toString())
                     val request = JSONObject(payload)
+                    if (session.uri == "/api/command") return reply(Response.Status.OK, actionResponse(core, payload).toString())
                     if (!request.has("id")) return reply(Response.Status.ACCEPTED, "")
                     val result = when (request.getString("method")) {
-                        "initialize" -> JSONObject().put("protocolVersion", "2025-03-26").put("capabilities", JSONObject().put("tools", JSONObject()))
-                            .put("serverInfo", JSONObject().put("name", "PhonePilot").put("version", "0.4.0"))
+                        "initialize" -> JSONObject().put("protocolVersion", request.optJSONObject("params")?.optString("protocolVersion")?.takeIf { it in ApiContract.MCP_VERSIONS } ?: ApiContract.MCP_VERSION).put("capabilities", JSONObject().put("tools", JSONObject()))
+                            .put("serverInfo", JSONObject().put("name", "PhonePilot").put("version", BuildConfig.VERSION_NAME))
                         "ping" -> JSONObject()
-                        "tools/list" -> JSONObject().put("tools", JSONArray(core.actions.map { name ->
-                            val schema = JSONObject("{\"type\":\"object\",\"properties\":{\"package\":{\"type\":\"string\"},\"value\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":100},\"command\":{\"type\":\"string\"}}}")
-                            val required = when(name) { "open_app" -> "package"; "volume_set" -> "value"; "root_shell" -> "command"; else -> null }
-                            if (required != null) schema.put("required", JSONArray().put(required))
-                            JSONObject().put("name", name).put("description", "Phone control: $name").put("inputSchema", schema)
-                        }))
+                        "tools/list" -> JSONObject().put("tools",JSONArray(core.definitions.map {it.mcp(modern)}))
                         "tools/call" -> {
                             val params = request.getJSONObject("params")
-                            try { content(core.execute(params.getString("name"), params.optJSONObject("arguments") ?: JSONObject()).toString()) }
-                            catch (error: Exception) { content(error.message ?: "Action failed").put("isError", true) }
+                            try {
+                                val args=if(params.has("arguments")) params.get("arguments") as? JSONObject ?: throw ActionFailure("INVALID_ARGUMENT","arguments 必须为对象") else JSONObject()
+                                val value=core.execute(params.opt("name") as? String ?: throw ActionFailure("INVALID_ARGUMENT","name 必须为字符串"),args)
+                                content(value.toString()).put("isError",false).also {if(modern) it.put("structuredContent",value)}
+                            } catch(error:Exception) {
+                                val code=if(error is ActionFailure) error.code else "EXECUTION_FAILED"
+                                content(JSONObject().put("errorCode",code).put("message",error.message ?: "Action failed").toString()).put("isError",true)
+                            }
                         }
                         else -> return reply(Response.Status.OK, JSONObject().put("jsonrpc", "2.0").put("id", request.get("id"))
                             .put("error", JSONObject().put("code", -32601).put("message", "Method not found")).toString())
@@ -131,13 +158,14 @@ class PilotService : Service() {
         var id: Any = JSONObject.NULL
         return try {
             val request = JSONObject(payload); id = request.opt("id") ?: JSONObject.NULL
-            JSONObject().put("id", id).put("result", core.execute(request.getString("action"), request.optJSONObject("args") ?: request))
-        } catch (error: Exception) { JSONObject().put("id", id).put("error", error.message ?: "Action failed") }
+            val args=if(request.has("args")) request.get("args") as? JSONObject ?: throw ActionFailure("INVALID_ARGUMENT","args 必须为对象") else JSONObject(request.toString()).apply {remove("id");remove("action")}
+            JSONObject().put("id",id).put("result",core.execute(request.opt("action") as? String ?: throw ActionFailure("INVALID_ARGUMENT","action 必须为字符串"),args))
+        } catch(error:Exception) { JSONObject().put("id",id).put("error",error.message ?: "Action failed").put("errorCode",if(error is ActionFailure) error.code else "EXECUTION_FAILED") }
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int) = START_STICKY
     override fun onDestroy() {
         RuntimeState.serviceRunning = false; RuntimeState.webSocketRunning = false; RuntimeState.httpRunning = false
-        RuntimeState.clients = 0; authenticated.clear(); maintenance.shutdownNow()
+        RuntimeState.clients = 0; authenticated.clear(); maintenance.shutdownNow();RuntimeState.revokeToken=null;RuntimeState.tokenConnections=null
         try { ws?.stop(1000) } catch (_: Exception) { }
         http?.stop()
         super.onDestroy()

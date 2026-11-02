@@ -28,3 +28,7 @@ AndroidPhonePilot 自有代码的许可证见 [LICENSE](LICENSE)。本文件区�
 ## 设置图标
 
 感谢 [Google Material Design Icons](https://github.com/google/material-design-icons) 提供设置齿轮图标。本项目将 settings 24px 图标转换为 Android VectorDrawable，保留 [Apache-2.0 许可证](third_party/material-design-icons/LICENSE)；来源见 [组件说明](third_party/material-design-icons/README.md)。界面参考 iOS 的分组列表和信息层级，使用 Android 原生组件独立实现，未使用 Apple 字体、SF Symbols 或 Apple 图像资源。
+
+## 协议集成验证
+
+感谢 [官方 MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) 与 [python-jsonschema](https://github.com/python-jsonschema/jsonschema) 社区。测试脚本使用 MCP SDK 2.3.0 进行实际 Streamable HTTP 客户端调用，并使用 jsonschema 独立验证对外 Schema 与示例；它们是开发测试依赖，不随 Android APK 打包。
