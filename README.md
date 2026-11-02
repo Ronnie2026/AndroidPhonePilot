@@ -1,6 +1,13 @@
 # AndroidPhonePilot
 
-原生 Kotlin Root Android 手机控制服务，独立实现，架构参考多入口共享动作层。
+原生 Kotlin Root Android 手机控制服务。架构方向参考 [DroidBridge](https://github.com/zephyr7030/DroidBridge)，当前代码独立实现，以多个协议入口共享同一套核心动作。
+
+## 架构与开源致谢
+
+- [架构说明](docs/ARCHITECTURE.md)：模块职责、调用关系、常驻设计与未来接入边界。
+- [致谢与开源来源](ACKNOWLEDGEMENTS.md)：DroidBridge 的设计参考关系、实际依赖与上游许可链接。
+
+感谢 DroidBridge、Java-WebSocket、NanoHTTPD 及 Kotlin、Android、Gradle、MCP 社区的作者与贡献者。
 
 ## 构建
 JDK 17、Android SDK 34、Build Tools 36.0.0，执行 `./gradlew assembleDebug`。最低 Android 8；当前 target 32 是首版兼容策略，上架前需要升级并适配新的前台服务政策。
