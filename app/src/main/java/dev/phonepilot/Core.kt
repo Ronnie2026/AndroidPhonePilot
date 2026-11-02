@@ -27,7 +27,7 @@ class AudioController(context:Context) {
 class PowerController(private val context:Context) { fun interactive()=context.getSystemService(PowerManager::class.java).isInteractive }
 class StatusController(private val audio:AudioController,private val power:PowerController) { fun get()=audio.status().put("screenOn",power.interactive()).put("model",android.os.Build.MODEL) }
 /** All transports and future BLE/ESP32 adapters call this boundary. */
-class CommandDispatcher(context:Context) {
+class CommandDispatcher(private val context:Context) {
  private val system=SystemController(); private val apps=AppController(system); private val screen=ScreenController(system); private val audio=AudioController(context); private val status=StatusController(audio,PowerController(context))
  val actions=listOf("open_app","open_grok","open_chatgpt","open_doubao","screen_on","screen_off","volume_up","volume_down","volume_set","get_status","root_shell")
  fun execute(action:String,args:JSONObject):JSONObject = when(action) {
@@ -37,7 +37,7 @@ class CommandDispatcher(context:Context) {
  "open_doubao"->apps.open("com.larus.nova")
  "screen_on"->screen.set(true); "screen_off"->screen.set(false)
  "volume_up"->audio.change(1); "volume_down"->audio.change(-1)
- "volume_set"->audio.set(args.getInt("value")); "get_status"->status.get()
+ "volume_set"->audio.set(args.getInt("value")); "get_status"->status.get().also { result -> val live=DeviceStatus.read(context); live.keys().forEach { key -> result.put(key,live.get(key)) } }
  "root_shell"->system.shell(args.getString("command"))
  else->error("Unknown action: $action")
  }

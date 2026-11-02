@@ -5,6 +5,7 @@ AndroidPhonePilot 将 Root Android 手机作为统一控制主机。协议层负
 ```mermaid
 flowchart TD
     WS[WebSocket /ws :8765] --> D[CommandDispatcher]
+    HTTP[HTTP /api/command :8766] --> D
     MCP[HTTP MCP /mcp :8766] --> D
     Future[未来 BLE / ESP32 / 小智适配器] -.-> D
     D --> App[AppController]
@@ -25,7 +26,9 @@ flowchart TD
 
 | 模块 | 当前职责 |
 | --- | --- |
-| MainActivity | 启动服务、显示本机控制令牌 |
+| MainActivity | 实时状态首页、主题、连接设置、令牌与示例复制 |
+| DeviceStatus | 内存、CPU、电池、网络和接口地址的共享采样 |
+| RuntimeState | 实际服务与端口状态、连接数、统一令牌及监听设置 |
 | PilotService | 前台通知与生命周期；承载两个网络入口 |
 | CommandDispatcher | 所有入口共享的动作名称、参数路由与控制器调用 |
 | AppController | 校验包名，通过 Root shell 启动应用；提供常用应用别名 |
@@ -42,7 +45,7 @@ flowchart TD
 
 WebSocket 接收 `action` 与 `args`；MCP 的 `tools/call` 将 `name` 与 `arguments` 映射到同一个 `execute`。例如两种入口的 volume_set 最终均调用 AudioController.set。MCP 提供 initialize、ping、tools/list、tools/call，当前采用 HTTP JSON 响应，尚未完成完整客户端互操作验证。
 
-控制端仅监听 127.0.0.1，两个入口均校验 Bearer token。首版令牌具有全部动作权限，包含 Root shell。当前不提供局域网直连、TLS 网关、权限分级或令牌轮换界面。
+控制端默认监听 127.0.0.1；用户可主动开启局域网监听。三个入口均校验同一 Bearer token，WebSocket 仅接受已通过认证连接的消息。首版令牌具有全部动作权限，包含 Root shell。当前支持手动开启可信局域网直连，尚无 TLS 网关、权限分级或令牌轮换界面。
 
 ## 常驻与扩展
 
@@ -54,4 +57,4 @@ WebSocket 接收 `action` 与 `args`；MCP 的 `tools/call` 将 `name` 与 `argu
 
 感谢 [DroidBridge](https://github.com/zephyr7030/DroidBridge) 对 Android 设备端 MCP、Root 控制与常驻服务方向的探索。本项目按需求参考这一方向，当前 Kotlin 控制层与协议适配代码独立编写，未复制或移植其源码，也未包含其 Root edition、隧道或自动化运行时。当前仓库不是 DroidBridge 的 Fork，不表示已经具备其功能覆盖范围。
 
-构建通过与真机功能通过分开记录；当前尚未连接真机。来源及依赖见 [ACKNOWLEDGEMENTS.md](../ACKNOWLEDGEMENTS.md)。
+构建通过与真机功能通过分开记录；当前已通过模拟器入口集成检查，尚未连接真机。来源及依赖见 [ACKNOWLEDGEMENTS.md](../ACKNOWLEDGEMENTS.md)。

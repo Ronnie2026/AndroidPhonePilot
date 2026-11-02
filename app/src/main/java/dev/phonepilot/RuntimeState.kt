@@ -1,0 +1,20 @@
+package dev.phonepilot
+
+import android.content.Context
+import java.util.UUID
+
+object RuntimeState {
+    @Volatile var serviceRunning = false
+    @Volatile var webSocketRunning = false
+    @Volatile var httpRunning = false
+    @Volatile var startedAt = 0L
+    @Volatile var lastError = ""
+    @Volatile var clients = 0
+    fun token(context: Context): String {
+        val prefs = context.getSharedPreferences("pilot", 0)
+        return prefs.getString("token", null) ?: UUID.randomUUID().toString().also {
+            prefs.edit().putString("token", it).apply()
+        }
+    }
+    fun host(context: Context) = if (context.getSharedPreferences("pilot", 0).getBoolean("lan", false)) "0.0.0.0" else "127.0.0.1"
+}
