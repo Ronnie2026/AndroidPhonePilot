@@ -4,9 +4,11 @@ AndroidPhonePilot 将 Root Android 手机作为统一控制主机。协议层负
 
 ```mermaid
 flowchart TD
-    WS[WebSocket /ws :8765] --> D[CommandDispatcher]
-    HTTP[HTTP /api/command :8766] --> D
-    MCP[HTTP MCP /mcp :8766] --> D
+    WS[WebSocket /ws :8765] --> Gate[Token 有效期与启用状态校验]
+    Gate --> Audit[请求响应审计]
+    Audit --> D[CommandDispatcher]
+    HTTP[HTTP /api/command :8766] --> Gate
+    MCP[HTTP MCP /mcp :8766] --> Gate
     Future[未来 BLE / ESP32 / 小智适配器] -.-> D
     D --> App[AppController]
     D --> Screen[ScreenController]
@@ -58,3 +60,12 @@ WebSocket 接收 `action` 与 `args`；MCP 的 `tools/call` 将 `name` 与 `argu
 感谢 [DroidBridge](https://github.com/zephyr7030/DroidBridge) 对 Android 设备端 MCP、Root 控制与常驻服务方向的探索。本项目按需求参考这一方向，当前 Kotlin 控制层与协议适配代码独立编写，未复制或移植其源码，也未包含其 Root edition、隧道或自动化运行时。当前仓库不是 DroidBridge 的 Fork，不表示已经具备其功能覆盖范围。
 
 构建通过与真机功能通过分开记录；当前已通过模拟器入口集成检查，尚未连接真机。来源及依赖见 [ACKNOWLEDGEMENTS.md](../ACKNOWLEDGEMENTS.md)。
+
+
+## 0.3.0 Token 与审计层
+
+TokenStore 管理具名 Token、有效期、启用状态和调用示例选项；各入口共享此校验。HTTP/MCP 在每次请求时验证，WebSocket 握手验证后保留 Token ID，每条消息重新检查当前状态，过期/停用时拒绝并关闭连接。
+
+AuditStore 串行处理全部日志写入、开关和删除。腾讯 Mars XLog 为 native 归档，SQLite 为可读查询索引（包含脱敏请求/响应）。记录带 Token ID、请求时间、入口/动作、来源、状态、成功标志与耗时；全局关闭后不再记录或累计统计。统计反映当前保留记录。删除时关闭/清理/重建专用 XLog 归档与 mmap 缓存，避免只删除界面索引而保留归档内容。TokenActivity 提供新建、有效期编辑、停用、统计、明细和删除；MainActivity 的示例使用选中的有效 Token。
+
+日志内容以 UTF-8 JSON 的 Base64 分片进入 XLog，规避原生日志单行限制。此编码不是加密，文件仍受应用私有目录保护。Native AAR 的来源、许可及平台边界见 third_party/mars-xlog/README.md。

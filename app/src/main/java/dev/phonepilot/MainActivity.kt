@@ -52,7 +52,7 @@ class MainActivity : Activity() {
         out.putBoolean("settings", settings); out.putString("publicIp", publicIp)
         super.onSaveInstanceState(out)
     }
-    override fun onResume() { super.onResume(); handler.post(ticker) }
+    override fun onResume() { super.onResume(); if(settings) render(); handler.post(ticker) }
     override fun onPause() { handler.removeCallbacks(ticker); super.onPause() }
     override fun onDestroy() { worker.shutdownNow(); super.onDestroy() }
     @Deprecated("Platform back navigation")
@@ -165,6 +165,7 @@ class MainActivity : Activity() {
         }
     }
     private fun copy(value: String) {
+        if(value.isEmpty()) { Toast.makeText(this, "没有有效 Token，请先新建或启用", Toast.LENGTH_SHORT).show(); return }
         getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("PhonePilot", value))
         Toast.makeText(this, "已复制", Toast.LENGTH_SHORT).show()
     }
@@ -172,7 +173,7 @@ class MainActivity : Activity() {
         val box = surface(); box.addView(text(title, 18f).apply { setTypeface(null, Typeface.BOLD) })
         box.addView(text(description, 13f, muted))
         box.addView(text(preview, 13f).apply { typeface = Typeface.MONOSPACE; setTextIsSelectable(true) })
-        button(box, "一键复制 $title") { copy(content()) }
+        button(box, "一键复制 $title") { if(title != "ADB 端口转发" && TokenStore.selected(this) == null) Toast.makeText(this, "没有有效 Token，请先新建或启用", Toast.LENGTH_SHORT).show() else copy(content()) }
     }
     private fun buildSettings() {
         val theme = surface(); theme.addView(text("外观", 18f))
@@ -180,11 +181,14 @@ class MainActivity : Activity() {
         button(theme, "主题：${when(prefs.getString("theme", "system")){"light"->"亮色";"dark"->"暗黑";else->"跟随系统"}}") {
             AlertDialog.Builder(this).setTitle("选择主题").setItems(modes) { _, which -> prefs.edit().putString("theme", arrayOf("system", "light", "dark")[which]).apply(); render() }.show()
         }
-        val access = surface(); access.addView(text("访问范围与统一密钥", 18f))
-        access.addView(text("MCP、HTTP、WebSocket 使用同一个 Bearer Token。复制示例会包含真实密钥，请只交给可信调用方。", 13f, muted))
+        val access = surface(); access.addView(text("访问范围与 Token", 18f))
+        access.addView(text("每个 Token 通用于 MCP、HTTP 和 WebSocket。可新建、设置有效期和查看调用日志；复制示例包含当前选中的密钥。", 13f, muted))
+        button(access, "Token 管理 / 调用统计与日志") { startActivity(Intent(this, TokenActivity::class.java)) }
+        val selected = TokenStore.selected(this)
+        access.addView(text("当前示例：${selected?.name ?: "没有有效 Token，请新建或启用"}", 13f, muted))
         val tokenView = text("••••••••  点击下方显示", 14f).apply { typeface = Typeface.MONOSPACE; setTextIsSelectable(true) }; access.addView(tokenView)
         button(access, "显示 / 隐藏密钥") { tokenView.text = if(tokenView.text.startsWith("••")) RuntimeState.token(this) else "••••••••  点击下方显示" }
-        button(access, "复制统一 Token") { copy(RuntimeState.token(this)) }
+        button(access, "复制当前 Token") { copy(RuntimeState.token(this)) }
         val lan = Switch(this).apply {
             text = "允许局域网调用"; setTextColor(fg); isChecked = prefs.getBoolean("lan", false)
             setOnCheckedChangeListener { _, checked ->

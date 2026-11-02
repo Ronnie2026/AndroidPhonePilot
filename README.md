@@ -56,3 +56,31 @@ open_app(package)、open_grok、open_chatgpt、open_doubao、screen_on、screen_
 真实蜂窝出口、信号、Root 动作、厂商后台策略仍需真机验证；MCP 尚未完成各客户端完整互操作验证。
 
 已在模拟器验证局域网开关开启/关闭后的服务恢复和三入口调用，WebSocket 启用端口复用以支持访问范围切换。新文件：`MainActivity.kt` 为首页与设置、`DeviceStatus.kt` 为统一状态采样、`RuntimeState.kt` 为服务状态和统一配置。
+
+## 0.3.0 多 Token、有效期与调用日志
+
+入口：连接设置 → **Token 管理 / 调用统计与日志**。
+
+- 新建具名 Token，默认 365 天，可指定 1–36500 天，或选“长期有效（最大）”。编辑有效期从保存时间重新起算；密钥不变。已有的旧版单一 Token 自动迁移为默认 Token，自升级起有效 365 天，原调用方无需立即更换密钥。
+- 每个有效 Token 通用于 HTTP、MCP 和 WebSocket。可选择用于复制调用示例的 Token，可随时停用/启用；没有有效 Token 时不会自动创建旁路密钥。
+- 每次 HTTP/MCP 请求和每条 WebSocket 动作均检查有效期和启用状态；已连接的 WebSocket 在下次请求时重新检查，失效则拒绝并关闭连接。
+- 全局调用日志默认开启，关闭后所有 Token 的新请求不写日志、不累计统计，已有记录保留。重新开启从后续调用开始记录，不补录关闭期间的调用。
+- 记录 Token 标识/名称、时间、入口、动作、来源、状态、成功/失败、耗时、请求及响应；WebSocket 握手也作为记录。未知 Token 的认证失败归入“未识别 Token”，不记录 Authorization 密钥。
+- 按 Token 查看保留调用总数、成功/失败、成功率、平均耗时、最近调用时间；明细每页 30 条，可查看/复制请求响应。统计基于保留日志，不是不可变的终身累计值。
+- 支持单条、当前 Token 和全部日志删除；同步重建 XLog 归档及缓存，清理查询索引。删除会减少相应统计。并发发生的新调用仍会按开关正常记录；如需清空后保持零记录，先关闭全局记录。
+- 日志最多保留约 2000 条，超过后淘汰最早 100 条。请求、响应各保留前 16K 字符，超过部分明确标注截断，不影响发送给调用方的原始响应。
+- 已知 Token、Bearer 密钥及常用敏感字段脱敏；请求和 Shell 响应仍可能含业务资料。日志保存在应用私有目录，不自动上传。
+
+### 日志存储与组件来源
+
+实际使用腾讯 **Mars XLog 1.2.6** native 库，归档位置 `files/audit-xlog/*.xlog`；对应缓存位于 `cache/audit-xlog/`。`databases/audit.db` 是可查询索引，含脱敏后的请求响应，便于明细、统计与删除后重建。XLog 目录由本组件独占。它是本地日志组件，不是腾讯云日志服务。
+
+依赖已固定归档并记录哈希和上游许可，见 [第三方组件说明](third_party/mars-xlog/README.md)。当前 AAR 为 ARM 库，16KB 页设备兼容性尚需真机确认；加载/写入失败在管理页显示，不能把索引成功视为 XLog 写入成功。
+
+### 自动验证
+
+现有 `scripts/smoke_test.py` 验证三入口基础调用。新增原生仪器测试覆盖 Token 365 天/长期有效/编辑/停用、HTTP/MCP 过期拦截、已有 WebSocket 过期后拒绝、日志明细/脱敏/全局开关/单条及按 Token 和全部删除、XLog native 归档。
+
+**仪器测试仅在可清理日志的模拟器运行，它会删除全部调用日志。** 构建 `./gradlew assembleDebug assembleDebugAndroidTest lintDebug`；安装两份 debug/test APK 后执行 `adb shell am instrument -w dev.phonepilot.test/dev.phonepilot.TokenAuditInstrumentation`。真机 Root、真实蜂窝和厂商常驻策略验证边界仍沿用前述说明。
+
+XLog 中每条审计记录按 UTF-8 JSON → Base64 → 编号分片写入，避免原生日志行长度限制及 Unicode 分片损失。Base64 仅是编码，不是加密；SQLite 明细直接显示脱敏后的 JSON。

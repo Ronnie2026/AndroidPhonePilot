@@ -20,3 +20,7 @@
 感谢 [Kotlin](https://github.com/JetBrains/kotlin)、[Android Open Source Project](https://source.android.com/)、[Gradle](https://github.com/gradle/gradle) 和 [Model Context Protocol](https://github.com/modelcontextprotocol/modelcontextprotocol) 社区提供语言、平台、构建工具与协议基础。MCP 当前由本项目直接实现所需 JSON-RPC 方法，未使用官方 MCP SDK。
 
 AndroidPhonePilot 自有代码的许可证见 [LICENSE](LICENSE)。本文件区分设计参考和实际依赖，后续新增或移植开源组件时应同步维护来源说明。
+
+## 腾讯 Mars XLog
+
+感谢 **[Tencent/Mars](https://github.com/Tencent/mars)** 作者和贡献者提供 XLog 本地日志组件。本项目从 0.3.0 起实际集成 `com.tencent.mars:mars-xlog:1.2.6`，用于保存调用请求与响应归档；不是仅参考其设计。保留 [上游许可与第三方声明](third_party/mars-xlog/LICENSE)，依赖来源、版本、校验值及 native 平台边界见 [组件说明](third_party/mars-xlog/README.md)。SQLite 查询索引使用 Android 系统 API 实现。

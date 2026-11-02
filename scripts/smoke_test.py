@@ -4,7 +4,17 @@ import shutil
 adb=shutil.which("adb")
 if not adb: raise SystemExit("Add Android platform-tools to PATH first")
 prefs=subprocess.check_output([adb,'shell','run-as','dev.phonepilot','cat','shared_prefs/pilot.xml'])
-token=ET.fromstring(prefs).find("string[@name='token']").text
+root=ET.fromstring(prefs)
+values=root.find("string[@name='tokens']")
+if values is not None:
+ import time
+ tokens=json.loads(values.text)
+ selected=root.find("string[@name='selectedToken']")
+ valid=[t for t in tokens if t['enabled'] and (t['expires']==0 or t['expires']>time.time()*1000)]
+ if not valid: raise SystemExit("No active Token: create one in app settings")
+ token=next((t['secret'] for t in valid if selected is not None and t['id']==selected.text),valid[0]['secret'])
+else:
+ token=root.find("string[@name='token']").text
 base='http://127.0.0.1:8766'
 def post(path,data,auth=True):
  r=urllib.request.Request(base+path,json.dumps(data).encode(),{'Content-Type':'application/json',**({'Authorization':'Bearer '+token} if auth else {})})

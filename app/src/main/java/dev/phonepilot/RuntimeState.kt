@@ -10,11 +10,6 @@ object RuntimeState {
     @Volatile var startedAt = 0L
     @Volatile var lastError = ""
     @Volatile var clients = 0
-    fun token(context: Context): String {
-        val prefs = context.getSharedPreferences("pilot", 0)
-        return prefs.getString("token", null) ?: UUID.randomUUID().toString().also {
-            prefs.edit().putString("token", it).apply()
-        }
-    }
+    fun token(context: Context): String = TokenStore.selected(context)?.secret ?: ""
     fun host(context: Context) = if (context.getSharedPreferences("pilot", 0).getBoolean("lan", false)) "0.0.0.0" else "127.0.0.1"
 }
