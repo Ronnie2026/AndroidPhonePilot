@@ -89,7 +89,7 @@ class PilotService : Service() {
                     if (!request.has("id")) return reply(Response.Status.ACCEPTED, "")
                     val result = when (request.getString("method")) {
                         "initialize" -> JSONObject().put("protocolVersion", "2025-03-26").put("capabilities", JSONObject().put("tools", JSONObject()))
-                            .put("serverInfo", JSONObject().put("name", "PhonePilot").put("version", "0.3.1"))
+                            .put("serverInfo", JSONObject().put("name", "PhonePilot").put("version", "0.4.0"))
                         "ping" -> JSONObject()
                         "tools/list" -> JSONObject().put("tools", JSONArray(core.actions.map { name ->
                             val schema = JSONObject("{\"type\":\"object\",\"properties\":{\"package\":{\"type\":\"string\"},\"value\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":100},\"command\":{\"type\":\"string\"}}}")

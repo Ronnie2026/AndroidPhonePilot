@@ -24,3 +24,7 @@ AndroidPhonePilot 自有代码的许可证见 [LICENSE](LICENSE)。本文件区�
 ## 腾讯 Mars XLog
 
 感谢 **[Tencent/Mars](https://github.com/Tencent/mars)** 作者和贡献者提供 XLog 本地日志组件。本项目从 0.3.0 起实际集成 `com.tencent.mars:mars-xlog:1.2.6`，用于保存调用请求与响应归档；不是仅参考其设计。保留 [上游许可与第三方声明](third_party/mars-xlog/LICENSE)，依赖来源、版本、校验值及 native 平台边界见 [组件说明](third_party/mars-xlog/README.md)。SQLite 查询索引使用 Android 系统 API 实现。
+
+## 设置图标
+
+感谢 [Google Material Design Icons](https://github.com/google/material-design-icons) 提供设置齿轮图标。本项目将 settings 24px 图标转换为 Android VectorDrawable，保留 [Apache-2.0 许可证](third_party/material-design-icons/LICENSE)；来源见 [组件说明](third_party/material-design-icons/README.md)。界面参考 iOS 的分组列表和信息层级，使用 Android 原生组件独立实现，未使用 Apple 字体、SF Symbols 或 Apple 图像资源。

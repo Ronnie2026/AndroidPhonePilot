@@ -1,6 +1,7 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android { namespace = "dev.phonepilot"; compileSdk = 34; buildToolsVersion = "36.0.0"
- defaultConfig { applicationId = "dev.phonepilot"; minSdk = 26; targetSdk = 32; testInstrumentationRunner = "dev.phonepilot.TokenAuditInstrumentation"; versionCode = 4; versionName = "0.3.1" }
+ defaultConfig { applicationId = "dev.phonepilot"; minSdk = 26; targetSdk = 32; testInstrumentationRunner = "dev.phonepilot.TokenAuditInstrumentation"; versionCode = 5; versionName = "0.4.0" }
+ buildFeatures { buildConfig = true }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
  // Private sideload service; target upgrade tracked in README.
  lint { disable += "ExpiredTargetSdkVersion" }

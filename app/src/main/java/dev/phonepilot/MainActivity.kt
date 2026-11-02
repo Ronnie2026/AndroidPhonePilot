@@ -1,17 +1,12 @@
 package dev.phonepilot
 
 import android.Manifest
-import android.app.Activity
 import android.app.AlertDialog
-import android.content.*
-import android.content.res.Configuration
-import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
+import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.*
-import android.view.*
+import android.view.Gravity
 import android.widget.*
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -20,216 +15,198 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
 
-class MainActivity : Activity() {
-    private val prefs by lazy { getSharedPreferences("pilot", 0) }
-    private val handler = Handler(Looper.getMainLooper())
-    private val worker = Executors.newSingleThreadExecutor()
-    private lateinit var column: LinearLayout
-    private val fields = mutableMapOf<String, TextView>()
-    private var settings = false
-    private var dark = false
-    private var fg = 0
-    private var muted = 0
-    private var card = 0
-    private var accent = 0
-    private var publicIp = "尚未查询"
-    private var querying = false
-    private val ticker = object : Runnable {
-        override fun run() {
-            if (!settings) refresh()
-            handler.postDelayed(this, 2000)
-        }
+class MainActivity : IosActivity() {
+    private val prefs by lazy { getSharedPreferences("pilot",0) }
+    private val handler=Handler(Looper.getMainLooper())
+    private val worker=Executors.newSingleThreadExecutor()
+    private val fields=mutableMapOf<String,TextView>()
+    private var screen="home"
+    private var publicIp="未查询"
+    private var querying=false
+    private var memoryBar: ProgressBar?=null
+    private val ticker=object:Runnable { override fun run() { if(screen=="home") refresh(); handler.postDelayed(this,2000) } }
+    override fun onCreate(state:Bundle?) {
+        super.onCreate(state); TokenStore.all(this)
+        startForegroundService(Intent(this,PilotService::class.java))
+        screen=state?.getString("screen") ?: "home"; publicIp=state?.getString("ip") ?: "未查询"; render()
     }
-    override fun onCreate(state: Bundle?) {
-        super.onCreate(state)
-        RuntimeState.token(this)
-        startForegroundService(Intent(this, PilotService::class.java))
-        settings = state?.getBoolean("settings") ?: false
-        publicIp = state?.getString("publicIp") ?: "尚未查询"
-        render()
-    }
-    override fun onSaveInstanceState(out: Bundle) {
-        out.putBoolean("settings", settings); out.putString("publicIp", publicIp)
-        super.onSaveInstanceState(out)
-    }
-    override fun onResume() { super.onResume(); if(settings) render(); handler.post(ticker) }
+    override fun onSaveInstanceState(out:Bundle) { out.putString("screen",screen); out.putString("ip",publicIp); super.onSaveInstanceState(out) }
+    override fun onResume() { super.onResume(); if(screen!="home") render(); handler.post(ticker) }
     override fun onPause() { handler.removeCallbacks(ticker); super.onPause() }
     override fun onDestroy() { worker.shutdownNow(); super.onDestroy() }
-    @Deprecated("Platform back navigation")
-    override fun onBackPressed() { if (settings) { settings = false; render() } else super.onBackPressed() }
-    private fun dp(value: Int) = (resources.displayMetrics.density * value).toInt()
-    private fun text(value: String, size: Float = 15f, color: Int = fg) = TextView(this).apply {
-        text = value; textSize = size; setTextColor(color); setPadding(0, dp(3), 0, dp(3))
-    }
-    private fun surface(): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(17), dp(20), dp(17))
-        background = GradientDrawable().apply { setColor(card); cornerRadius = dp(20).toFloat() }
-        column.addView(this, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(14) })
-    }
-    private fun button(parent: LinearLayout, label: String, action: () -> Unit) {
-        parent.addView(Button(this).apply {
-            text = label; isAllCaps = false; setTextColor(accent); setOnClickListener { action() }
-        }, LinearLayout.LayoutParams(-1, -2))
-    }
-    private fun field(parent: LinearLayout, key: String, label: String) {
-        parent.addView(text(label, 12f, muted))
-        val view = text("—", 20f); fields[key] = view; parent.addView(view)
-    }
+    @Deprecated("Platform navigation") override fun onBackPressed() { if(screen!="home") go(if(screen=="settings") "home" else "settings") else super.onBackPressed() }
+    private fun go(value:String) { screen=value; render() }
     private fun render() {
-        dark = when (prefs.getString("theme", "system")) {
-            "dark" -> true; "light" -> false
-            else -> resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+        fields.clear(); memoryBar=null
+        when(screen) {
+            "home" -> { page("概览",gear=true,rightAction={go("settings")}); home() }
+            "settings" -> { page("设置","概览",{go("home")}); settings() }
+            else -> { page(when(screen){"mcp"->"MCP";"http"->"HTTP";"ws"->"WebSocket";"adb"->"ADB";else->"Root Shell"},"设置",{go("settings")}); connection() }
         }
-        setTheme(if (dark) android.R.style.Theme_Material_NoActionBar else android.R.style.Theme_Material_Light_NoActionBar)
-        fg = Color.parseColor(if (dark) "#ECF3F0" else "#172C28")
-        muted = Color.parseColor(if (dark) "#9DB1AA" else "#62776F")
-        card = Color.parseColor(if (dark) "#192C27" else "#FFFFFF")
-        accent = Color.parseColor(if (dark) "#73E2BD" else "#116B53")
-        val bg = Color.parseColor(if (dark) "#0D1B17" else "#F1F5F2")
-        window.statusBarColor = bg; window.navigationBarColor = bg
-        window.decorView.systemUiVisibility = if (dark) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
-        fields.clear()
-        val scroll = ScrollView(this).apply { setBackgroundColor(bg); isFillViewport = true }
-        column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(18), dp(20), dp(24)) }
-        scroll.addView(column); setContentView(scroll)
-        val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        header.addView(text(if (settings) "连接与设置" else "PhonePilot", 28f).apply { setTypeface(null, Typeface.BOLD) }, LinearLayout.LayoutParams(0, -2, 1f))
-        header.addView(Button(this).apply { text = if (settings) "返回" else "⚙"; textSize = 22f; setTextColor(accent); contentDescription = if (settings) "返回首页" else "打开连接与设置"; setOnClickListener { settings = !settings; render() } }, LinearLayout.LayoutParams(dp(72), dp(56)))
-        column.addView(header)
-        column.addView(text(if (settings) "统一令牌 · 多种入口 · 相同核心动作" else "手机控制中心  /  每 2 秒更新", 13f, muted))
-        column.addView(Space(this), LinearLayout.LayoutParams(1, dp(20)))
-        if (settings) buildSettings() else buildHome()
     }
-    private fun buildHome() {
-        val service = surface()
-        service.addView(text("服务概览", 13f, accent))
-        field(service, "service", "前台控制服务")
-        field(service, "ports", "协议入口")
-        field(service, "uptime", "服务运行时长 · WebSocket 连接")
-        val load = surface()
-        load.addView(text("设备负载", 13f, accent))
-        field(load, "cpu", "应用 CPU · 单核占用")
-        field(load, "appMemory", "应用内存 PSS")
-        field(load, "memory", "系统内存使用")
-        field(load, "battery", "电量 · 充电状态")
-        field(load, "thermal", "电池温度 · 电流（设备报告值）")
-        val network = surface()
-        network.addView(text("网络与地址", 13f, accent))
-        field(network, "network", "当前网络 · 信号")
-        field(network, "ips", "本机 IPv4 · 接口")
-        network.addView(text("私网地址用于局域网；移动数据接口地址可能属于运营商内网。", 12f, muted))
-        field(network, "publicIp", "移动网络临时出口 IP")
-        network.addView(text("按需经移动网络访问 api.ipify.org 查询；Wi-Fi 地址不会被当作移动出口。出口地址可能变化，也不代表可从公网直连。", 12f, muted))
-        button(network, "查询移动网络出口 IP") { lookupPublicIp() }
-        button(network, "授权识别移动网络与信号") { requestPermissions(arrayOf(Manifest.permission.READ_PHONE_STATE), 11) }
-        column.addView(text("${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE}", 12f, muted))
+    private fun metric(parent:LinearLayout,key:String,title:String,subtitle:String,margin:Boolean) {
+        val tile=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; background=rounded(surface); setPadding(dp(16),dp(14),dp(16),dp(14)) }
+        tile.addView(label(title,12f,secondary))
+        fields[key]=label("—",27f,ink,true).also { tile.addView(it,LinearLayout.LayoutParams(-1,0,1f)) }
+        fields["${key}Note"]=label(subtitle,11f,secondary).also { tile.addView(it) }
+        parent.addView(tile,LinearLayout.LayoutParams(0,dp(110),1f).apply { if(margin) rightMargin=dp(12) })
+    }
+    private fun home() {
+        val health=group()
+        val line=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL; setPadding(dp(16),dp(16),dp(16),dp(16)) }
+        fields["serviceDot"]=label("●",18f,green).apply { setPadding(0,0,dp(12),0) }.also {line.addView(it)}
+        val state=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL }
+        fields["service"]=label("正在连接服务",17f,ink,true).also { state.addView(it) }
+        fields["ports"]=label("",12f,secondary).also { state.addView(it,LinearLayout.LayoutParams(-1,-2).apply { topMargin=dp(5) }) }
+        line.addView(state,LinearLayout.LayoutParams(0,-2,1f))
+        fields["uptime"]=label("00:00",14f,secondary).also { line.addView(it) }; health.addView(line)
+        gap(8)
+        val first=LinearLayout(this); content.addView(first); metric(first,"cpu","应用 CPU","单核占用",true); metric(first,"appMemory","应用内存","PSS 实时采样",false)
+        gap(12)
+        val second=LinearLayout(this); content.addView(second); metric(second,"battery","电池","",true); metric(second,"calls","调用次数","当前保留日志",false)
+        gap(24)
+        val device=group("设备负载")
+        fields["memory"]=row(device,"系统内存")
+        memoryBar=ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal).apply { max=100; progressTintList=android.content.res.ColorStateList.valueOf(blue); progressBackgroundTintList=android.content.res.ColorStateList.valueOf(if(dark) 0xFF38383A.toInt() else 0xFFE5E5EA.toInt()) }
+        device.addView(memoryBar,LinearLayout.LayoutParams(-1,dp(4)).apply { leftMargin=dp(16);rightMargin=dp(16);bottomMargin=dp(12) })
+        fields["thermal"]=row(device,"电池温度 / 电流")
+        fields["clients"]=row(device,"WebSocket 连接")
+        gap(20)
+        val network=group("网络")
+        fields["network"]=row(network,"当前连接")
+        fields["signal"]=row(network,"信号强度")
+        fields["ips"]=row(network,"局域网 IP")
+        fields["publicIp"]=row(network,"移动网络出口",action={lookupPublicIp()})
+        footnote("点击移动网络出口查询临时 IP。出口地址不代表公网可直连。")
+        gap(14)
+        footnote("${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE}\n每 2 秒更新")
         refresh()
     }
     private fun refresh() {
-        val s = DeviceStatus.read(this)
-        fields["service"]?.text = if (s.getBoolean("serviceRunning")) "● 运行中" else "○ 未运行"
-        fields["service"]?.setTextColor(if (s.getBoolean("serviceRunning")) accent else muted)
-        fields["ports"]?.text = "HTTP / MCP ${if(s.getBoolean("httpRunning")) "在线" else "离线"}  ·  WS ${if(s.getBoolean("webSocketRunning")) "在线" else "离线"}" + if(RuntimeState.lastError.isNotEmpty()) "\n${RuntimeState.lastError}" else ""
-        val seconds = s.getLong("serviceUptimeSeconds")
-        fields["uptime"]?.text = "${seconds / 3600}时 ${seconds / 60 % 60}分 ${seconds % 60}秒  ·  ${s.getInt("webSocketClients")} 个连接"
-        fields["cpu"]?.text = if(s.isNull("appCpuPercent")) "采样中…" else "${s.getDouble("appCpuPercent")}%"
-        fields["appMemory"]?.text = "${s.getInt("appMemoryMb")} MB"
-        fields["memory"]?.text = "${s.getLong("systemMemoryUsedMb")} / ${s.getLong("systemMemoryTotalMb")} MB" + if(s.getBoolean("lowMemory")) " · 内存紧张" else ""
-        fields["battery"]?.text = "${s.getInt("batteryPercent").let { if(it<0) "未知" else "$it%" }}  ·  ${if(s.getBoolean("charging")) "正在充电" else "使用电池"}"
-        fields["thermal"]?.text = "${s.getDouble("temperatureC")} °C  ·  ${if(s.isNull("batteryCurrentMa")) "电流不可用" else "${s.getInt("batteryCurrentMa")} mA"}"
-        fields["network"]?.text = "${s.getString("network")}\n${s.getString("signal")}"
-        val ips = s.getJSONArray("addresses")
-        fields["ips"]?.text = (0 until ips.length()).joinToString("\n") { i -> ips.getJSONObject(i).let { "${it.getString("ip")}  ·  ${it.getString("interface")}${if(it.getBoolean("private")) " · 私网" else ""}" } }.ifEmpty { "暂无 IPv4 地址" }
-        fields["publicIp"]?.text = publicIp
+        val s=DeviceStatus.read(this)
+        fields["serviceDot"]?.setTextColor(if(s.getBoolean("serviceRunning")) green else secondary)
+        fields["service"]?.text=if(s.getBoolean("serviceRunning")) "服务运行中" else "服务未运行"
+        fields["ports"]?.text="HTTP / MCP ${if(s.getBoolean("httpRunning")) "在线" else "离线"} · WS ${if(s.getBoolean("webSocketRunning")) "在线" else "离线"}" + if(RuntimeState.lastError.isNotEmpty()) "\n${RuntimeState.lastError}" else ""
+        val seconds=s.getLong("serviceUptimeSeconds")
+        fields["uptime"]?.text=String.format(Locale.ROOT,"%02d:%02d:%02d",seconds/3600,seconds/60%60,seconds%60)
+        fields["cpu"]?.text=if(s.isNull("appCpuPercent")) "—" else "${s.getDouble("appCpuPercent")}%"
+        fields["appMemory"]?.text="${s.getInt("appMemoryMb")} MB"
+        fields["battery"]?.text=if(s.getInt("batteryPercent")<0) "—" else "${s.getInt("batteryPercent")}%"
+        fields["batteryNote"]?.text=if(s.getBoolean("charging")) "正在充电" else "使用电池"
+        fields["memory"]?.text="${s.getLong("systemMemoryUsedMb")} / ${s.getLong("systemMemoryTotalMb")} MB"
+        memoryBar?.progress=(s.getLong("systemMemoryUsedMb")*100/s.getLong("systemMemoryTotalMb").coerceAtLeast(1)).toInt()
+        fields["thermal"]?.text="${s.getDouble("temperatureC")}°C · ${if(s.isNull("batteryCurrentMa")) "—" else "${s.getInt("batteryCurrentMa")} mA"}"
+        fields["clients"]?.text="${s.getInt("webSocketClients")} 个"
+        fields["network"]?.text=s.getString("network")
+        fields["signal"]?.text=s.getString("signal")
+        val ips=s.getJSONArray("addresses")
+        fields["ips"]?.text=(0 until ips.length()).map { ips.getJSONObject(it) }.joinToString("\n") { "${it.getString("ip")} · ${it.getString("interface")}" }.ifEmpty { "未分配" }
+        fields["publicIp"]?.text=publicIp
+        // Query aggregation off the UI thread so archiving/cleanup does not block scrolling.
+        worker.execute {
+            val stats=AuditStore.stats(this)
+            handler.post { if(!isDestroyed && screen=="home") { fields["calls"]?.text=stats.getLong("count").toString(); fields["callsNote"]?.text="成功 ${stats.getLong("success")} · 均耗 ${stats.getLong("avgMs")} ms" } }
+        }
+    }
+    private fun manager(page:String) { startActivity(Intent(this,TokenActivity::class.java).putExtra("page",page)) }
+    private fun settings() {
+        val general=group("常规")
+        row(general,"外观",when(prefs.getString("theme","system")){"dark"->"暗黑";"light"->"亮色";else->"跟随系统"},action={
+            AlertDialog.Builder(this).setTitle("外观").setSingleChoiceItems(arrayOf("跟随系统","亮色","暗黑"),when(prefs.getString("theme","system")){"light"->1;"dark"->2;else->0}) { dialog,index -> prefs.edit().putString("theme",arrayOf("system","light","dark")[index]).apply();dialog.dismiss();render() }.setNegativeButton("取消",null).show()
+        })
+        gap()
+        val access=group("访问控制")
+        val tokens=TokenStore.all(this)
+        row(access,"Token 管理","${tokens.count { it.valid() }} 个有效",action={manager("tokens")})
+        row(access,"调用示例使用",TokenStore.selected(this)?.name ?: "未选择",action={chooseToken()})
+        row(access,"允许局域网调用",control=toggle(prefs.getBoolean("lan",false),"允许局域网调用") { checked ->
+            if(checked) AlertDialog.Builder(this).setTitle("允许局域网调用？").setMessage("HTTP / WS 不加密，请在可信局域网使用。公网调用请使用加密隧道。")
+                .setPositiveButton("开启") { _,_->changeLan(true) }.setNegativeButton("取消") { _,_->render() }.setOnCancelListener { render() }.show()
+            else changeLan(false)
+        })
+        footnote(if(prefs.getBoolean("lan",false)) "局域网可访问，所有入口均需有效 Token。" else "仅本机可访问，可通过 ADB 转发连接。")
+        gap(14)
+        val protocols=group("连接方式")
+        row(protocols,"MCP","HTTP JSON",action={go("mcp")})
+        row(protocols,"HTTP","/api/command",action={go("http")})
+        row(protocols,"WebSocket","/ws",action={go("ws")})
+        gap()
+        val logs=group("日志")
+        row(logs,"调用统计与明细",action={manager("logs")})
+        row(logs,"日志存储",if(AuditStore.enabled(this)) "已开启 · ${AuditStore.retentionDays(this)} 天" else "已关闭",action={manager("storage")})
+        gap()
+        val tools=group("系统工具")
+        row(tools,"ADB","端口转发",action={go("adb")})
+        row(tools,"Root Shell","调用说明",action={go("shell")})
+        row(tools,"网络识别权限",action={requestPermissions(arrayOf(Manifest.permission.READ_PHONE_STATE),11)})
+        footnote("PhonePilot ${BuildConfig.VERSION_NAME} · 原生 Android 控制服务")
+    }
+    private fun chooseToken() {
+        val values=TokenStore.all(this).filter { it.valid() }
+        if(values.isEmpty()) { manager("tokens");return }
+        AlertDialog.Builder(this).setTitle("选择调用 Token").setItems(values.map { it.name }.toTypedArray()) { _,index ->TokenStore.select(this,values[index].id);render() }.setNegativeButton("取消",null).show()
+    }
+    private fun host():String {
+        if(!prefs.getBoolean("lan",false)) return "127.0.0.1"
+        val addresses=DeviceStatus.read(this).getJSONArray("addresses")
+        val values=(0 until addresses.length()).map { addresses.getJSONObject(it) }.filter { it.getBoolean("private") }
+        return (values.firstOrNull { it.getString("interface").startsWith("wlan") } ?: values.firstOrNull())?.getString("ip") ?: "127.0.0.1"
+    }
+    private fun connection() {
+        val address=host()
+        val endpoint=when(screen){"mcp"->"http://$address:8766/mcp";"ws"->"ws://$address:8765/ws";else->"http://$address:8766/api/command"}
+        if(screen=="adb") {
+            val g=group("USB 调试")
+            row(g,"复制端口转发命令",action={copy("adb forward tcp:8765 tcp:8765\nadb forward tcp:8766 tcp:8766")})
+            footnote("在已授权 USB 调试的电脑执行。ADB 和直接 adb shell 沿用系统原有授权。")
+            return
+        }
+        val connection=group("接口")
+        row(connection,"地址",endpoint,action={copy(endpoint)})
+        row(connection,"Token",TokenStore.selected(this)?.name ?: "未选择",action={chooseToken()})
+        row(connection,"复制 Token",action={copy(RuntimeState.token(this))})
+        gap()
+        val examples=group("调用示例")
+        row(examples,"复制调用示例",action={
+            val token=RuntimeState.token(this)
+            if(token.isEmpty()) { toast("请先创建有效 Token");return@row }
+            val headers="-H 'Authorization: Bearer $token' -H 'Content-Type: application/json'"
+            val command="{\"id\":1,\"action\":\"get_status\",\"args\":{}}"
+            copy(when(screen) {
+                "mcp"->"curl $endpoint $headers -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"get_status\",\"arguments\":{}}}'"
+                "ws"->"# 建立连接后发送下一行 JSON\nwebsocat -H='Authorization: Bearer $token' $endpoint\n$command"
+                "shell"->"curl $endpoint $headers -d '{\"id\":2,\"action\":\"root_shell\",\"args\":{\"command\":\"id\"}}'"
+                else->"curl $endpoint $headers -d '$command'"
+            })
+        })
+        if(screen=="mcp") row(examples,"复制 MCP 客户端配置",action={
+            val token=RuntimeState.token(this);if(token.isEmpty()){toast("请先创建有效 Token");return@row}
+            copy(JSONObject().put("mcpServers",JSONObject().put("phonepilot",JSONObject().put("url",endpoint).put("headers",JSONObject().put("Authorization","Bearer $token")))).toString(2))
+        })
+        footnote(when(screen){"ws"->"连接时携带 Authorization 请求头，发送 JSON 动作。电脑示例使用 websocat。";"mcp"->"使用支持 HTTP MCP 与认证头的客户端。";"shell"->"通过 root_shell 动作执行 su -c，需要手机 Root 授权。";else->"POST JSON 动作；与 MCP、WebSocket 使用相同的核心实现。"})
+        footnote("复制内容包含密钥，仅交给可信调用方。")
+        gap(16)
+        val actions=group("可用动作")
+        val listing=label(CommandDispatcher(this).actions.joinToString("  ·  "),13f,secondary).apply { setPadding(dp(16),dp(14),dp(16),dp(14));setLineSpacing(dp(6).toFloat(),1f) };actions.addView(listing)
+    }
+    private fun changeLan(enabled:Boolean) {
+        prefs.edit().putBoolean("lan",enabled).apply();stopService(Intent(this,PilotService::class.java));startForegroundService(Intent(this,PilotService::class.java));render()
     }
     private fun lookupPublicIp() {
-        if (querying) return
-        val cm = getSystemService(ConnectivityManager::class.java)
-        val mobile = cm.allNetworks.firstOrNull { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true }
-        if (mobile == null) {
-            publicIp = "移动数据未连接；请开启移动数据，必要时关闭 Wi-Fi 后重试"
-            refresh(); return
-        }
-        querying = true; publicIp = "正在通过移动网络查询…"; refresh()
+        if(querying) return
+        val cm=getSystemService(ConnectivityManager::class.java)
+        val mobile=cm.allNetworks.firstOrNull { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)==true }
+        if(mobile==null) { toast("请开启移动数据后重试");return }
+        querying=true;publicIp="查询中…";fields["publicIp"]?.text=publicIp
         worker.execute {
-            val result = try {
-                val connection = mobile.openConnection(java.net.URL("https://api.ipify.org?format=json")) as HttpURLConnection
-                try {
-                    connection.connectTimeout = 8000; connection.readTimeout = 8000
-                    require(connection.responseCode == 200) { "查询服务暂不可用" }
-                    val ip = JSONObject(connection.inputStream.bufferedReader().use { it.readText() }).getString("ip")
-                    "$ip\n临时出口 · ${SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())} 查询"
+            val result=try {
+                val connection=mobile.openConnection(java.net.URL("https://api.ipify.org?format=json")) as HttpURLConnection
+                try { connection.connectTimeout=8000;connection.readTimeout=8000;require(connection.responseCode==200)
+                    val ip=JSONObject(connection.inputStream.bufferedReader().use { it.readText() }).getString("ip")
+                    "$ip\n${SimpleDateFormat("HH:mm",Locale.getDefault()).format(Date())} · 临时"
                 } finally { connection.disconnect() }
-            } catch (_: Exception) { "查询失败；移动数据可能不可用，请稍后重试" }
-            handler.post { if (!isDestroyed) { publicIp = result; querying = false; if (!settings) refresh() } }
+            } catch (_:Exception) { "查询失败，点击重试" }
+            handler.post { if(!isDestroyed) { publicIp=result;querying=false;fields["publicIp"]?.text=publicIp } }
         }
-    }
-    private fun copy(value: String) {
-        if(value.isEmpty()) { Toast.makeText(this, "没有有效 Token，请先新建或启用", Toast.LENGTH_SHORT).show(); return }
-        getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("PhonePilot", value))
-        Toast.makeText(this, "已复制", Toast.LENGTH_SHORT).show()
-    }
-    private fun snippet(title: String, description: String, preview: String, content: () -> String) {
-        val box = surface(); box.addView(text(title, 18f).apply { setTypeface(null, Typeface.BOLD) })
-        box.addView(text(description, 13f, muted))
-        box.addView(text(preview, 13f).apply { typeface = Typeface.MONOSPACE; setTextIsSelectable(true) })
-        button(box, "一键复制 $title") { if(title != "ADB 端口转发" && TokenStore.selected(this) == null) Toast.makeText(this, "没有有效 Token，请先新建或启用", Toast.LENGTH_SHORT).show() else copy(content()) }
-    }
-    private fun buildSettings() {
-        val theme = surface(); theme.addView(text("外观", 18f))
-        val modes = arrayOf("跟随系统", "亮色", "暗黑")
-        button(theme, "主题：${when(prefs.getString("theme", "system")){"light"->"亮色";"dark"->"暗黑";else->"跟随系统"}}") {
-            AlertDialog.Builder(this).setTitle("选择主题").setItems(modes) { _, which -> prefs.edit().putString("theme", arrayOf("system", "light", "dark")[which]).apply(); render() }.show()
-        }
-        val access = surface(); access.addView(text("访问范围与 Token", 18f))
-        access.addView(text("每个 Token 通用于 MCP、HTTP 和 WebSocket。可新建、设置有效期和查看调用日志；复制示例包含当前选中的密钥。", 13f, muted))
-        button(access, "Token 管理 / 调用统计与日志") { startActivity(Intent(this, TokenActivity::class.java)) }
-        val selected = TokenStore.selected(this)
-        access.addView(text("当前示例：${selected?.name ?: "没有有效 Token，请新建或启用"}", 13f, muted))
-        val tokenView = text("••••••••  点击下方显示", 14f).apply { typeface = Typeface.MONOSPACE; setTextIsSelectable(true) }; access.addView(tokenView)
-        button(access, "显示 / 隐藏密钥") { tokenView.text = if(tokenView.text.startsWith("••")) RuntimeState.token(this) else "••••••••  点击下方显示" }
-        button(access, "复制当前 Token") { copy(RuntimeState.token(this)) }
-        val lan = Switch(this).apply {
-            text = "允许局域网调用"; setTextColor(fg); isChecked = prefs.getBoolean("lan", false)
-            setOnCheckedChangeListener { _, checked ->
-                if (checked) AlertDialog.Builder(this@MainActivity).setTitle("允许局域网调用")
-                    .setMessage("将监听全部本机接口。普通 HTTP / WS 不加密，请仅在可信局域网使用；公网访问请使用加密隧道。")
-                    .setPositiveButton("开启") { _, _ -> changeLan(true) }
-                    .setNegativeButton("取消") { _, _ -> isChecked = false }.setOnCancelListener { isChecked = false }.show()
-                else changeLan(false)
-            }
-        }; access.addView(lan)
-        access.addView(text("当前监听：${RuntimeState.host(this)}。本机模式通过 ADB 转发；局域网模式会在复制示例中填入手机私网 IP。临时公网 IP 仅供识别出口，未提供公网穿透。", 13f, muted))
-        val addresses = DeviceStatus.read(this).getJSONArray("addresses")
-        val privateIps = (0 until addresses.length()).map { addresses.getJSONObject(it) }.filter { it.getBoolean("private") }
-        val localIp = (privateIps.firstOrNull { it.getString("interface").startsWith("wlan") } ?: privateIps.firstOrNull())?.getString("ip")
-        val callHost = if (prefs.getBoolean("lan", false)) localIp ?: "127.0.0.1" else "127.0.0.1"
-        access.addView(text("示例调用地址：$callHost（局域网模式自动使用当前私网 IP）", 13f, muted))
-        val token = { RuntimeState.token(this) }
-        val header = { "-H 'Authorization: Bearer ${token()}' -H 'Content-Type: application/json'" }
-        val command = "{\"id\":1,\"action\":\"get_status\",\"args\":{}}"
-        snippet("MCP 调用", "HTTP JSON 模式；以下为 get_status 工具调用示例。", "POST http://$callHost:8766/mcp") {
-            "curl http://$callHost:8766/mcp ${header()} -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"get_status\",\"arguments\":{}}}'"
-        }
-        snippet("MCP 客户端配置", "客户端需支持 HTTP MCP 与自定义认证头；不同客户端配置格式可能不同。", "URL + Authorization 请求头") {
-            JSONObject().put("mcpServers", JSONObject().put("phonepilot", JSONObject().put("url", "http://$callHost:8766/mcp").put("headers", JSONObject().put("Authorization", "Bearer ${token()}")))).toString(2)
-        }
-        snippet("HTTP 调用", "普通 JSON 动作接口，与 MCP、WebSocket 共用核心。", "POST http://$callHost:8766/api/command") { "curl http://$callHost:8766/api/command ${header()} -d '$command'" }
-        snippet("WebSocket 调用", "握手时携带 Authorization；连接成功后发送 JSON。电脑需安装 websocat。", "ws://$callHost:8765/ws\n$command") {
-            "# 先建立连接，再粘贴下一行 JSON\nwebsocat -H='Authorization: Bearer ${token()}' ws://$callHost:8765/ws\n$command"
-        }
-        snippet("ADB 端口转发", "在已授权 USB 调试的电脑执行；ADB 自身沿用系统授权机制。", "电脑端 8765 / 8766 → 手机相同端口") { "adb forward tcp:8765 tcp:8765\nadb forward tcp:8766 tcp:8766" }
-        snippet("Root Shell 调用", "通过统一 HTTP 动作执行 su -c；需要手机 Root 授权。直接 adb shell 仍按系统原有权限执行，不受本应用 Token 管理。", "root_shell(command) · 示例 id") {
-            "curl http://$callHost:8766/api/command ${header()} -d '{\"id\":2,\"action\":\"root_shell\",\"args\":{\"command\":\"id\"}}'"
-        }
-        val actions = surface(); actions.addView(text("可用动作", 18f)); actions.addView(text(CommandDispatcher(this).actions.joinToString("  ·  "), 13f, muted))
-    }
-    private fun changeLan(enabled: Boolean) {
-        if (prefs.getBoolean("lan", false) == enabled) return
-        prefs.edit().putBoolean("lan", enabled).apply()
-        stopService(Intent(this, PilotService::class.java))
-        startForegroundService(Intent(this, PilotService::class.java))
-        Toast.makeText(this, "正在应用访问范围", Toast.LENGTH_SHORT).show()
-        handler.postDelayed({ if (!isDestroyed) render() }, 500)
     }
 }
