@@ -135,3 +135,10 @@ XLog 中每条审计记录按 UTF-8 JSON → Base64 → 编号分片写入，避
 当前 MCP 为 Streamable HTTP 的无状态 JSON 响应模式：POST /mcp 返回 JSON；GET /mcp 返回 405，未提供 SSE 推送。Origin 存在时校验同源，未知来源 403。官方 MCP Python SDK 2.3.0 的 streamable_http_client 已实测：initialize 协商 2025-06-18、列举 13 个工具、get_status、volume_up、volume_set、参数错误和 describe_action 均完成；媒体音量实际 7 → 8 → 7 并恢复。Root id 返回 Cannot run program su: Permission denied，模拟器内应用未获得 su 权限，不能据此确认 Root 真机动作。
 
 复现：安装 scripts/requirements-test.txt，以 ANDROID_SERIAL 指定模拟器并转发端口后运行 scripts/mcp_client_test.py。脚本只允许模拟器，音量测试完成会恢复原档位；PHONEPILOT_MCP_REPORT 可保存无密钥的调用记录。此为官方 SDK 单项互操作证据，不表示所有客户端和 Root/ROM 行为都通过验证。
+
+
+### 首轮真机结果
+
+[NX888J / Android 16 验证记录](docs/device-validation/2026-11-02-NX888J.md)：三入口、Schema、Token 拦截、官方 SDK 状态与音量实际调用、XLog 写入通过；用户确认无 Root，因此 Root 动作不可用。
+
+多设备调试时使用 ANDROID_SERIAL 选择目标，PHONEPILOT_HTTP_PORT / PHONEPILOT_WS_PORT 指定电脑转发端口，避免与模拟器冲突。真实设备运行 mcp_client_test.py 时还需 PHONEPILOT_ALLOW_DEVICE=1，明确允许短暂调整并恢复媒体音量。

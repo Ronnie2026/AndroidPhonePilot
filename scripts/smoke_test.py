@@ -15,7 +15,9 @@ if values is not None:
  token=next((t['secret'] for t in valid if selected is not None and t['id']==selected.text),valid[0]['secret'])
 else:
  token=root.find("string[@name='token']").text
-base='http://127.0.0.1:8766'
+http_port=int(os.environ.get('PHONEPILOT_HTTP_PORT','8766'))
+ws_port=int(os.environ.get('PHONEPILOT_WS_PORT','8765'))
+base=f'http://127.0.0.1:{http_port}'
 def post(path,data,auth=True):
  r=urllib.request.Request(base+path,json.dumps(data).encode(),{'Content-Type':'application/json',**({'Authorization':'Bearer '+token} if auth else {})})
  try:
@@ -34,9 +36,9 @@ _,tools=post('/mcp',{'jsonrpc':'2.0','id':2,'method':'tools/list'})
 assert {'get_status','root_shell','list_actions','describe_action'} <= {t['name'] for t in tools['result']['tools']}
 # Minimal RFC6455 client: exercise the real WebSocket server without new dependencies.
 def connect(auth):
- s=socket.create_connection(('127.0.0.1',8765));s.settimeout(5)
+ s=socket.create_connection(('127.0.0.1',ws_port));s.settimeout(5)
  key=base64.b64encode(os.urandom(16)).decode()
- request=f'GET /ws HTTP/1.1\r\nHost: 127.0.0.1:8765\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n'+(f'Authorization: Bearer {token}\r\n' if auth else '')+'\r\n'
+ request=f'GET /ws HTTP/1.1\r\nHost: 127.0.0.1:{ws_port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n'+(f'Authorization: Bearer {token}\r\n' if auth else '')+'\r\n'
  s.sendall(request.encode());buf=b''
  while b'\r\n\r\n' not in buf:buf+=s.recv(1)
  return s

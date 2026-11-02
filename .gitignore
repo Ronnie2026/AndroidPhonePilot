@@ -2,3 +2,7 @@
 .gradle/
 **/build/
 local.properties
+
+# Local debug traces may include device state; never commit them.
+work/
+__pycache__/

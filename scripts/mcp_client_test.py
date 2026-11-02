@@ -1,6 +1,7 @@
-"""Real official MCP SDK 2.3.0 Streamable HTTP client test, emulator only.
+"""Real official MCP SDK 2.3.0 Streamable HTTP client test, with explicit opt-in for a physical device.
 Uses reversible media-volume actions and restores the original level; Root `id` is read-only.
-Requires ANDROID_SERIAL=emulator-..., adb forwards, and scripts/requirements-test.txt.
+Requires ANDROID_SERIAL, adb forwards, and scripts/requirements-test.txt.
+Physical devices additionally require PHONEPILOT_ALLOW_DEVICE=1.
 """
 import asyncio,importlib.metadata,json,os,shutil,subprocess,xml.etree.ElementTree as ET
 from pathlib import Path
@@ -8,7 +9,8 @@ import httpx2
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 serial=os.environ.get('ANDROID_SERIAL','')
-if not serial.startswith('emulator-'):raise SystemExit('Set ANDROID_SERIAL to the test emulator; this script changes and restores its media volume.')
+if not serial:raise SystemExit('Set ANDROID_SERIAL to the intended device.')
+if not serial.startswith('emulator-') and os.environ.get('PHONEPILOT_ALLOW_DEVICE')!='1':raise SystemExit('Physical-device testing changes/restores media volume: set PHONEPILOT_ALLOW_DEVICE=1 explicitly.')
 adb=shutil.which('adb')
 prefs=ET.fromstring(subprocess.check_output([adb,'-s',serial,'shell','run-as','dev.phonepilot','cat','shared_prefs/pilot.xml']))
 values=json.loads(prefs.find("string[@name='tokens']").text)
@@ -16,7 +18,8 @@ import time
 valid=[v for v in values if v['enabled'] and (v['expires']==0 or v['expires']>time.time()*1000)]
 selected=prefs.find("string[@name='selectedToken']")
 token=next((v['secret'] for v in valid if selected is not None and v['id']==selected.text),valid[0]['secret'])
-report={'sdkVersion':importlib.metadata.version('mcp'),'transport':'Streamable HTTP (stateless JSON responses)','endpoint':'http://127.0.0.1:8766/mcp','responseFormat':'Official SDK parsed results; may include SDK default fields, not raw HTTP bodies','calls':[]}
+http_port=int(os.environ.get('PHONEPILOT_HTTP_PORT','8766'))
+report={'sdkVersion':importlib.metadata.version('mcp'),'transport':'Streamable HTTP (stateless JSON responses)','endpoint':f'http://127.0.0.1:{http_port}/mcp','responseFormat':'Official SDK parsed results; may include SDK default fields, not raw HTTP bodies','calls':[]}
 def dump(model):return model.model_dump(mode='json',by_alias=True,exclude_none=True)
 def business(model):
  value=dump(model)
