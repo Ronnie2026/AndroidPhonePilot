@@ -1,5 +1,7 @@
 # AndroidPhonePilot
 
+继续开发或新聊天接手，请先读 [开发交接](docs/HANDOFF.md)、[工程约定](AGENTS.md) 和 [动作标准](docs/ACTION_STANDARD.md)。
+
 原生 Kotlin Root Android 手机控制服务。架构方向参考 [DroidBridge](https://github.com/zephyr7030/DroidBridge)，当前代码独立实现，以多个协议入口共享同一套核心动作。
 
 ## 架构与开源致谢
