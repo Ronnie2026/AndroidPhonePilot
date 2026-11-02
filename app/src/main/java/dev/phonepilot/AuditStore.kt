@@ -10,13 +10,14 @@ import org.json.JSONObject
 import java.io.File
 import java.util.UUID
 
-/** XLog is the local archive; SQLite is its bounded, readable query index. All mutation is serialized. */
+/** XLog is the local archive; SQLite is its readable query index. All mutation is serialized. */
 object AuditStore {
     private lateinit var context: Context
     private lateinit var db: SQLiteDatabase
     private var initialized = false
     private var nativeLoaded = false
     private var opened = false
+    private var lastCleanup = 0L
     @Volatile var error = ""
         private set
     private val logDir get() = File(context.filesDir, "audit-xlog")
@@ -28,6 +29,7 @@ object AuditStore {
         db.rawQuery("PRAGMA secure_delete=ON", null).use { it.moveToFirst() }
         db.execSQL("CREATE TABLE IF NOT EXISTS audit (id TEXT PRIMARY KEY, token_id TEXT, token_name TEXT, time INTEGER, transport TEXT, action TEXT, peer TEXT, status INTEGER, success INTEGER, duration INTEGER, request TEXT, response TEXT)")
         initialized = true
+        removeExpired(System.currentTimeMillis())
         rebuild()
     }
     fun enabled(c: Context) = c.getSharedPreferences("pilot", 0).getBoolean("auditEnabled", true)
@@ -35,6 +37,28 @@ object AuditStore {
         init(c); c.getSharedPreferences("pilot", 0).edit().putBoolean("auditEnabled", enabled).apply()
         if (enabled && !opened) rebuild()
         if (!enabled && opened) Log.appenderFlushSync(true)
+    }
+    fun retentionDays(c: Context) = c.getSharedPreferences("pilot", 0).getInt("auditRetentionDays", 30)
+    fun autoCleanup(c: Context) = c.getSharedPreferences("pilot", 0).getBoolean("auditAutoCleanup", true)
+    @Synchronized fun setRetention(c: Context, days: Int, automatic: Boolean) {
+        require(days in 1..36500) { "请输入 1 至 36500 天" }
+        init(c)
+        c.getSharedPreferences("pilot", 0).edit().putInt("auditRetentionDays", days).putBoolean("auditAutoCleanup", automatic).apply()
+        cleanup(c, true)
+    }
+    private fun removeExpired(now: Long): Int {
+        if (!autoCleanup(context)) return 0
+        val cutoff = now - retentionDays(context).toLong() * 86400000L
+        return db.delete("audit", "time < ?", arrayOf(cutoff.toString()))
+    }
+    @Synchronized fun cleanup(c: Context, force: Boolean = false): Int {
+        init(c)
+        val now = System.currentTimeMillis()
+        if (!force && now >= lastCleanup && now-lastCleanup < 3600000L) return 0
+        lastCleanup = now
+        val removed = removeExpired(now)
+        if (removed > 0) { rebuild(); db.execSQL("VACUUM") }
+        return removed
     }
     private fun openNative() {
         if (!nativeLoaded) {
@@ -44,6 +68,8 @@ object AuditStore {
         logDir.mkdirs(); cacheDir.mkdirs()
         Log.appenderOpen(Xlog.LEVEL_INFO, Xlog.AppednerModeAsync, cacheDir.absolutePath, logDir.absolutePath, "phonepilot", 0)
         Log.setConsoleLogOpen(false)
+        // Application policy owns retention, including when automatic cleanup is disabled.
+        Xlog().setMaxAliveTime(0, 36500L * 86400L)
         opened = true; error = ""
     }
     private fun archive(row: JSONObject) {
@@ -89,8 +115,7 @@ object AuditStore {
         record.keys().forEach { key -> val v = record.get(key); if(v is Number) values.put(key, v.toLong()) else values.put(key, v.toString()) }
         db.insertOrThrow("audit", null, values)
         try { if (opened) { archive(record); Log.appenderFlushSync(true) } } catch (_: Exception) { error = "XLog 写入失败" }
-        val count = db.rawQuery("SELECT COUNT(*) FROM audit", null).use { it.moveToFirst(); it.getInt(0) }
-        if(count > 2000) { db.execSQL("DELETE FROM audit WHERE id IN (SELECT id FROM audit ORDER BY time, rowid LIMIT 100)"); rebuild() }
+        cleanup(c)
     }
     @Synchronized fun stats(c: Context, tokenId: String? = null): JSONObject {
         init(c)

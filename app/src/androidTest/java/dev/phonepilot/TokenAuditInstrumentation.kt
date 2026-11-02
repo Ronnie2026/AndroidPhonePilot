@@ -77,14 +77,28 @@ class TokenAuditInstrumentation : Instrumentation() {
             val dir=java.io.File(c.filesDir,"audit-xlog"); check(dir.listFiles()?.any { it.extension=="xlog" && it.length()>0 } == true)
             AuditStore.delete(c); check(AuditStore.stats(c).getLong("count")==0L)
             check(AuditStore.error.isEmpty())
+            AuditStore.setRetention(c,30,false)
+            val now=System.currentTimeMillis()
+            AuditStore.record(c,forever,"HTTP","{\"action\":\"old_31_days\"}","{}",200,true,now-31L*86400000L,1)
+            AuditStore.record(c,forever,"HTTP","{\"action\":\"recent_29_days\"}","{}",200,true,now-29L*86400000L,1)
+            check(AuditStore.retentionDays(c)==30 && !AuditStore.autoCleanup(c))
+            AuditStore.cleanup(c,true); check(AuditStore.stats(c).getLong("count")==2L)
+            AuditStore.setRetention(c,30,true)
+            check(AuditStore.stats(c).getLong("count")==1L)
+            check(AuditStore.list(c,null).single().getString("action")=="recent_29_days")
+            check(AuditStore.error.isEmpty())
+            AuditStore.setRetention(c,7,true); check(AuditStore.stats(c).getLong("count")==0L)
+            check(runCatching { AuditStore.setRetention(c,0,true) }.isFailure)
+            AuditStore.setRetention(c,30,true)
             resultCode = ActivityResult.OK
-            result.putString("stream","PASS: 365-day/default + perpetual expiry; edit; HTTP/MCP expiry & disable; connected WS expiry; per-token stats/details; secret masking; global off; single/token/all deletion; native XLog archive.\n")
+            result.putString("stream","PASS: 365-day/default + perpetual expiry; edit; HTTP/MCP expiry & disable; connected WS expiry; per-token stats/details; secret masking; global off; single/token/all deletion; native XLog archive; 30-day retention, cleanup checkbox and custom 7-day policy.\n")
         } catch(failure: Throwable) {
             result.putString("stream","FAIL: ${failure.javaClass.simpleName}: ${failure.message}\n${failure.stackTrace.take(5).joinToString("\n")}\n")
         } finally {
             activeSocket?.close()
             val prefs=c.getSharedPreferences("pilot",0)
             val retained=TokenStore.all(c).filter { it.id !in created }.map { it.json() }
+            AuditStore.setRetention(c,30,true)
             AuditStore.setEnabled(c,true)
             prefs.edit().putString("tokens",JSONArray(retained).toString()).putString("selectedToken",original ?: "").putBoolean("auditEnabled",true).commit()
         }

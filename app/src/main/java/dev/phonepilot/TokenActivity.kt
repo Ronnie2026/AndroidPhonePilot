@@ -61,13 +61,43 @@ class TokenActivity : Activity() {
     }
     private fun tokenList() {
         val global = box()
-        global.addView(Switch(this).apply {
-            text = "全局调用日志"; setTextColor(fg); isChecked = AuditStore.enabled(this@TokenActivity)
-            setOnCheckedChangeListener { _, checked -> AuditStore.setEnabled(this@TokenActivity, checked); render() }
+        global.addView(text("日志存储", 18f))
+        global.addView(RadioGroup(this).apply {
+            orientation = RadioGroup.HORIZONTAL
+            val on = RadioButton(this@TokenActivity).apply { id = android.view.View.generateViewId(); text = "开启日志"; setTextColor(fg) }
+            val off = RadioButton(this@TokenActivity).apply { id = android.view.View.generateViewId(); text = "关闭日志"; setTextColor(fg) }
+            addView(on); addView(off)
+            check(if(AuditStore.enabled(this@TokenActivity)) on.id else off.id)
+            setOnCheckedChangeListener { _, checked -> AuditStore.setEnabled(this@TokenActivity, checked == on.id); render() }
         })
+        val retentionRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        retentionRow.addView(text("日志保留 "))
+        val days = EditText(this).apply { inputType = android.text.InputType.TYPE_CLASS_NUMBER; setText(AuditStore.retentionDays(this@TokenActivity).toString()); setTextColor(fg); setSingleLine(true); contentDescription = "日志保留天数" }
+        retentionRow.addView(days, LinearLayout.LayoutParams(dp(90), -2)); retentionRow.addView(text(" 天")); global.addView(retentionRow)
+        val automatic = CheckBox(this).apply { text = "自动清理 ${AuditStore.retentionDays(this@TokenActivity)} 天以前的数据"; setTextColor(fg); isChecked = AuditStore.autoCleanup(this@TokenActivity) }
+        global.addView(automatic)
+        days.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) { }
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { automatic.text = "自动清理 ${s.toString().ifEmpty { "—" }} 天以前的数据" }
+            override fun afterTextChanged(s: android.text.Editable?) { }
+        })
+        fun saveRetention() {
+            val value = days.text.toString().toIntOrNull()
+            if(value == null || value !in 1..36500) { Toast.makeText(this, "请输入 1 至 36500 天", Toast.LENGTH_SHORT).show(); return }
+            val clean = automatic.isChecked
+            worker.execute {
+                try {
+                    AuditStore.setRetention(this, value, clean)
+                    runOnUiThread { if(!isDestroyed) { render(); Toast.makeText(this, if(AuditStore.error.isEmpty()) "日志设置已保存" else AuditStore.error, Toast.LENGTH_LONG).show() } }
+                } catch (_: Exception) { runOnUiThread { if(!isDestroyed) Toast.makeText(this, "设置保存失败，请重试", Toast.LENGTH_SHORT).show() } }
+            }
+        }
+        automatic.setOnCheckedChangeListener { _, _ -> saveRetention() }
+        button(global, "保存保留天数") { saveRetention() }
+        global.addView(text(if(AuditStore.autoCleanup(this)) "服务运行期间每小时检查，到期数据同步清理明细与 XLog；下次启动也会检查。" else "自动清理已关闭，历史数据保留至手动删除。", 12f, muted))
         global.addView(text(if(AuditStore.enabled(this)) "记录已开启 · 腾讯 Mars XLog 本地存储" else "记录已关闭 · 新请求不写日志，也不累计统计", 13f, muted))
         if(AuditStore.error.isNotEmpty()) global.addView(text(AuditStore.error, 14f, Color.parseColor("#D96855")))
-        global.addView(text("统计基于保留的日志；清理后相应统计同步减少。最多保留约 2000 条，单条请求/响应各保留前 16K 字符。密钥脱敏，不上传腾讯云。", 12f, muted))
+        global.addView(text("统计基于保留的日志；清理后相应统计同步减少。按保留天数清理；单条请求/响应各保留前 16K 字符。密钥脱敏，不上传腾讯云。", 12f, muted))
         val summary = AuditStore.stats(this)
         global.addView(text("保留 ${summary.getLong("count")} 次 · 成功 ${summary.getLong("success")} 次 · 平均 ${summary.getLong("avgMs")} ms"))
         button(global, "查看全部调用日志") { openLogs(null) }

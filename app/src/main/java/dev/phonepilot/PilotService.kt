@@ -15,6 +15,7 @@ import java.util.concurrent.ConcurrentHashMap
 class PilotService : Service() {
     private var ws: WebSocketServer? = null
     private var http: NanoHTTPD? = null
+    private val maintenance = java.util.concurrent.Executors.newSingleThreadScheduledExecutor()
     private val authenticated = ConcurrentHashMap<WebSocket, String>()
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onCreate() {
@@ -26,6 +27,7 @@ class PilotService : Service() {
             .setContentText("点击查看服务状态与连接方式").setContentIntent(launch)
             .setSmallIcon(android.R.drawable.ic_menu_manage).build())
         TokenStore.all(this); AuditStore.init(this)
+        maintenance.scheduleWithFixedDelay({ try { AuditStore.cleanup(this) } catch (_: Exception) { android.util.Log.e("PhonePilot", "Audit cleanup failed") } }, 0, 1, java.util.concurrent.TimeUnit.HOURS)
         RuntimeState.serviceRunning = true
         RuntimeState.startedAt = SystemClock.elapsedRealtime()
         RuntimeState.lastError = ""
@@ -87,7 +89,7 @@ class PilotService : Service() {
                     if (!request.has("id")) return reply(Response.Status.ACCEPTED, "")
                     val result = when (request.getString("method")) {
                         "initialize" -> JSONObject().put("protocolVersion", "2025-03-26").put("capabilities", JSONObject().put("tools", JSONObject()))
-                            .put("serverInfo", JSONObject().put("name", "PhonePilot").put("version", "0.3.0"))
+                            .put("serverInfo", JSONObject().put("name", "PhonePilot").put("version", "0.3.1"))
                         "ping" -> JSONObject()
                         "tools/list" -> JSONObject().put("tools", JSONArray(core.actions.map { name ->
                             val schema = JSONObject("{\"type\":\"object\",\"properties\":{\"package\":{\"type\":\"string\"},\"value\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":100},\"command\":{\"type\":\"string\"}}}")
@@ -135,7 +137,7 @@ class PilotService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int) = START_STICKY
     override fun onDestroy() {
         RuntimeState.serviceRunning = false; RuntimeState.webSocketRunning = false; RuntimeState.httpRunning = false
-        RuntimeState.clients = 0; authenticated.clear()
+        RuntimeState.clients = 0; authenticated.clear(); maintenance.shutdownNow()
         try { ws?.stop(1000) } catch (_: Exception) { }
         http?.stop()
         super.onDestroy()
